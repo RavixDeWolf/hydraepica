@@ -218,8 +218,14 @@ const tg = window.Telegram && Telegram.WebApp;
 if (tg) { tg.ready(); tg.expand(); }
 const INIT = tg ? tg.initData : "";
 // a big stage video lives on the host's disk ("media:<person>/<file>") and streams from /api/media
+// URLs (<video src>, EventSource) cannot send headers: they carry a short-lived ticket, never the login data itself
+let TICKET = "";
+async function refreshTicket() {
+  try { const r = await fetch("/api/ticket", { headers: { "X-Init-Data": INIT } }); if (r.ok) TICKET = (await r.json()).t; }
+  catch (e) { console.warn("ticket refresh failed", e); }
+}
 const mediaUrl = (src) => String(src || "").startsWith("media:")
-  ? "/api/media/" + encodeURIComponent(String(src).split("/").pop()) + "?init=" + encodeURIComponent(INIT) : src;
+  ? "/api/media/" + encodeURIComponent(String(src).split("/").pop()) + "?t=" + encodeURIComponent(TICKET) : src;
 const H = { "X-Init-Data": INIT };
 
 function showErr(t) { const e = document.getElementById("err"); e.textContent = t; e.style.display = t ? "block" : "none"; }
@@ -808,8 +814,9 @@ async function camClear() {
     else if (camResume && document.getElementById("view-cam").classList.contains("active")) { camResume = false; camStart(); }
   });
 })();
-function live() {
-  const es = new EventSource("/api/events?init=" + encodeURIComponent(INIT));
+async function live() {
+  await refreshTicket();                    // every (re)connect gets a fresh one, so an expired ticket heals itself
+  const es = new EventSource("/api/events?t=" + encodeURIComponent(TICKET));
   es.onmessage = m => {
     const ev = JSON.parse(m.data);
     if (ev.type === "speak") { camSpeak(ev.id); return; }
@@ -842,6 +849,7 @@ function live() {
       document.getElementById("nav-cam").style.display = "";
       // clips recorded before the app was closed are still on the host: show them, still sendable
     }
+    await refreshTicket(); setInterval(refreshTicket, 30 * 60 * 1000);
     await loadStage(); live();
     await restorePlace();                       // back where he was (Settings > Save my place)
     if (CAN_LIVE) {

@@ -2,7 +2,8 @@
 """hub.py - the example MCP hub: tickets, exec and senses as tools for every head.
 
   python3 hub/hub.py                     # stdio (Claude Code launches it per head)
-  python3 hub/hub.py --http 9000         # streamable HTTP on 127.0.0.1, shared by all heads
+  python3 hub/hub.py --http 9000         # streamable HTTP on 127.0.0.1, shared by all heads; needs HUB_TOKEN set,
+                                         # and clients send "Authorization: Bearer $HUB_TOKEN"
 
 Each head's MCP config sets HUB_IDENTITY (e.g. "head:main"), so the audit log says which head made each call.
 The tools are thin: the logic lives in tickets.py / exec_tool.py / senses.py and is tested without MCP.
@@ -67,11 +68,32 @@ def senses(action: str, camera: str = "", lines: int = 20) -> dict:
         return {"error": str(e)}
 
 
+def bearer_gate(app, token):
+    """ASGI wrapper: every HTTP request must carry the hub token. Constant-time compare; a miss is a plain 401."""
+    import hmac
+    want = f"Bearer {token}".encode()
+
+    async def gated(scope, receive, send):
+        if scope["type"] == "http":
+            got = dict(scope.get("headers") or []).get(b"authorization", b"")
+            if not hmac.compare_digest(got, want):
+                await send({"type": "http.response.start", "status": 401,
+                            "headers": [(b"content-type", b"text/plain"), (b"www-authenticate", b"Bearer")]})
+                await send({"type": "http.response.body", "body": b"hub token required"})
+                return
+        await app(scope, receive, send)
+    return gated
+
+
 if __name__ == "__main__":
     ap = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
     ap.add_argument("--http", type=int, metavar="PORT")
     a = ap.parse_args()
     if a.http:
-        hub.run("streamable-http", host="127.0.0.1", port=a.http)
+        token = os.environ.get("HUB_TOKEN", "")
+        if len(token) < 32:
+            sys.exit("--http needs HUB_TOKEN (32+ random chars): without it any local process could call exec")
+        import uvicorn
+        uvicorn.run(bearer_gate(hub.streamable_http_app(), token), host="127.0.0.1", port=a.http, log_level="warning")
     else:
         hub.run("stdio")

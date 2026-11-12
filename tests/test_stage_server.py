@@ -720,15 +720,21 @@ class BrowserDoor(unittest.TestCase):
 
     def test_view_hang_is_a_503_not_a_frozen_image(self):
         with self.mock.patch("urllib.request.urlopen", self._urlopen(exc=TimeoutError("timed out"))):
-            r = c.get("/api/browser", headers=H(USER_B))
+            r = c.get("/api/browser", headers=H(OWNER))
         self.assertEqual(r.status_code, 503)
         self.assertIn("not answering", r.json()["detail"])
         self.assertNotIn("src", r.json())
         with self.mock.patch("urllib.request.urlopen", self._urlopen([{"type": "browser_ui"}])):
-            self.assertEqual(c.get("/api/browser", headers=H(USER_B)).json()["note"], "no page open")   # unchanged
+            self.assertEqual(c.get("/api/browser", headers=H(OWNER)).json()["note"], "no page open")   # unchanged
         self.assertEqual(c.get("/api/browser").status_code, 401)
         rows = [json.loads(l) for l in open(s.BROWSER_AUDIT)]
         self.assertEqual(rows[-1]["what"], "view")
+
+    def test_view_is_admins_only(self):
+        """Security review 2026-11-12: any allow-listed person could screenshot the agent's signed-in browser."""
+        with self.mock.patch("urllib.request.urlopen", self._urlopen([{"type": "browser_ui"}])):
+            self.assertEqual(c.get("/api/browser", headers=H(USER_B)).status_code, 403)
+            self.assertEqual(c.get("/api/browser", headers=H(OWNER)).status_code, 200)
 
     def test_url_cleaner_unit(self):
         self.assertEqual(s._clean_browser_url("  https://Example.com/x  "), "https://Example.com/x")
@@ -743,7 +749,7 @@ class Screen(unittest.TestCase):
     def test_receiver_needs_its_key(self):
         self.assertEqual(c.get("/screen/tv").status_code, 401)
         self.assertEqual(c.get("/screen/tv?k=wrong").status_code, 401)
-        self.assertEqual(c.get("/screen/tv?k=tv-key-123").status_code, 200)
+        self.assertEqual(c.get("/screen/tv?k=tv-key-0123456789abcdef0123456789abcdef").status_code, 200)
         self.assertEqual(c.get("/screen/wall?k=").status_code, 401)            # not a receiver: no page at all
         self.assertEqual(c.get("/screen/tv/k/wrong/f/cast-x.html").status_code, 401)
 
@@ -751,9 +757,32 @@ class Screen(unittest.TestCase):
         it = s.add_item("alex", {"kind": "card", "title": "On TV", "body": "b"})
         r = c.post("/api/act", json={"where": "history", "id": it["id"], "action": "cast", "to": "tv"}, headers=H(OWNER))
         self.assertEqual(r.status_code, 200, r.text)
-        page = c.get("/screen/tv/now?k=tv-key-123").json()["page"]
-        self.assertIn("On TV", c.get(f"/screen/tv/k/tv-key-123/f/{page}.html").text)
-        self.assertEqual(c.get("/screen/tv/k/tv-key-123/f/..%2Fsecret.html").status_code, 404)
+        page = c.get("/screen/tv/now?k=tv-key-0123456789abcdef0123456789abcdef").json()["page"]
+        self.assertIn("On TV", c.get(f"/screen/tv/k/tv-key-0123456789abcdef0123456789abcdef/f/{page}.html").text)
+        self.assertEqual(c.get("/screen/tv/k/tv-key-0123456789abcdef0123456789abcdef/f/..%2Fsecret.html").status_code, 404)
 
     def test_me_lists_the_screens(self):
         self.assertEqual(c.get("/api/me", headers=H(OWNER)).json()["screens"], ["den", "tv", "wall"])
+
+
+class UrlTicket(unittest.TestCase):
+    """Security review 2026-11-12: initData rode in ?init= (24 h valid, lands in proxy logs). Now: header only,
+    and URLs carry a signed ticket that expires."""
+
+    def test_init_in_query_is_refused(self):
+        from urllib.parse import quote
+        self.assertEqual(c.get("/api/stage?init=" + quote(init(OWNER))).status_code, 401)
+
+    def test_ticket_works_in_urls_and_expires(self):
+        t = c.get("/api/ticket", headers=H(OWNER)).json()["t"]
+        self.assertEqual(c.get(f"/api/stage?t={t}").status_code, 200)
+        old = s.make_ticket(OWNER, now=time.time() - s.TICKET_TTL_S - 5)
+        self.assertEqual(c.get(f"/api/stage?t={old}").status_code, 401)
+
+    def test_ticket_cannot_be_forged_or_renew_itself(self):
+        t = c.get("/api/ticket", headers=H(OWNER)).json()["t"]
+        uid, exp, sig = t.split(".")
+        self.assertEqual(c.get(f"/api/stage?t={USER_B}.{exp}.{sig}").status_code, 401)        # swapped user
+        self.assertEqual(c.get(f"/api/stage?t={uid}.{int(exp) + 9999}.{sig}").status_code, 401)  # stretched expiry
+        self.assertEqual(c.get(f"/api/ticket?t={t}").status_code, 401)                      # no self-renewal
+        self.assertEqual(c.get(f"/api/stage?t={s.make_ticket(STRANGER)}").status_code, 401)  # not a person

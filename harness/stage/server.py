@@ -11,6 +11,8 @@ reach the app), url {url} (a link card). The open page gets each new item over S
 """
 import asyncio
 import json
+import hmac
+import hashlib
 import re
 import os
 import sys
@@ -54,9 +56,40 @@ def push_key():
         return ""
 
 
+TICKET_TTL_S = 3600      # a URL ticket: long enough for a film, short enough that a logged URL soon goes dead
+
+
+def _ticket_key(token=None):
+    return hmac.new((token if token is not None else bot_token()).encode(), b"stage-url-ticket", hashlib.sha256).digest()
+
+
+def make_ticket(uid, token=None, now=None):
+    """-> 'uid.exp.sig'. Used in URLs (<video src>, EventSource) that cannot send the X-Init-Data header, so the
+    Telegram login data itself never lands in a URL, a proxy log or a Referer."""
+    exp = int((now or time.time()) + TICKET_TTL_S)
+    sig = hmac.new(_ticket_key(token), f"{uid}.{exp}".encode(), hashlib.sha256).hexdigest()
+    return f"{uid}.{exp}.{sig}"
+
+
+def _ticket_uid(t, token=None, now=None):
+    try:
+        uid, exp, sig = t.split(".")
+        good = hmac.new(_ticket_key(token), f"{uid}.{exp}".encode(), hashlib.sha256).hexdigest()
+        if hmac.compare_digest(sig, good) and int(exp) > (now or time.time()) and int(uid) in PEOPLE:
+            return int(uid)
+    except (ValueError, AttributeError):
+        pass
+    raise HTTPException(401, "ticket invalid or expired")
+
+
 def person_for(request: Request, token=None):
-    """-> person name. initData (header X-Init-Data, or ?init= for SSE which cannot send headers)."""
-    data = request.headers.get("x-init-data") or request.query_params.get("init") or ""
+    """-> (person, uid). initData in the X-Init-Data header, or a short-lived ?t= ticket for URLs that cannot
+    send headers. initData is never accepted from the query string."""
+    t = request.query_params.get("t")
+    if t and not request.headers.get("x-init-data"):
+        uid = _ticket_uid(t, token)
+        return PEOPLE[uid], uid
+    data = request.headers.get("x-init-data") or ""
     try:
         user = tg_webapp_auth.verify(data, token if token is not None else bot_token(), allowed_ids=set(PEOPLE))
     except tg_webapp_auth.AuthError as e:
@@ -339,6 +372,15 @@ def me(request: Request):
             "screens": _screen_names()}
 
 
+@app.get("/api/ticket")
+def ticket(request: Request):
+    """A fresh URL ticket. Needs the real login header, so a leaked ticket cannot renew itself."""
+    if not request.headers.get("x-init-data"):
+        raise HTTPException(401, "send X-Init-Data")
+    _, uid = person_for(request)
+    return {"t": make_ticket(uid), "ttl": TICKET_TTL_S}
+
+
 @app.get("/api/stage")
 def stage(request: Request):
     person, _ = person_for(request)
@@ -348,7 +390,7 @@ def stage(request: Request):
 
 @app.get("/api/media/{fname}")
 def media(fname: str, request: Request):
-    """A big stage video, streamed with Range support. ?init= because a <video> tag cannot send headers."""
+    """A big stage video, streamed with Range support. ?t= ticket because a <video> tag cannot send headers."""
     person, _ = person_for(request)
     f = media_path(f"media:{person}/{fname}")
     if not f:
@@ -587,8 +629,10 @@ async def browser_open(request: Request):
 
 @app.get("/api/browser")
 def browser(request: Request):
-    """A fresh screenshot of the agent browser (Chrome on :98, CDP 127.0.0.1:9222)."""
-    person_for(request)
+    """A fresh screenshot of the agent browser (CDP on 127.0.0.1). Admins only: it shows signed-in pages."""
+    _, uid = person_for(request)
+    if uid not in BROWSER_ADMINS:
+        raise HTTPException(403, "the browser is the owner's")
     try:
         import base64
         import urllib.request

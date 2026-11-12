@@ -56,9 +56,21 @@ def screens():
     return out
 
 
+MIN_KEY_LEN = 32     # e.g. `python3 -c "import secrets; print(secrets.token_urlsafe(32))"` (43 chars)
+
+
 def screen_key(name):
+    """-> the receiver screen's key, or "" (screen off) when it is unset or too short to be a real secret.
+    A short key is refused loudly rather than used: the key is the only thing guarding that screen."""
     s = screens().get(name) or {}
-    return os.environ.get(s.get("key_env") or "", "") if s.get("kind") == "receiver" else ""
+    if s.get("kind") != "receiver":
+        return ""
+    k = os.environ.get(s.get("key_env") or "", "")
+    if k and len(k) < MIN_KEY_LEN:
+        print(f"cast: screen {name!r} key in ${s.get('key_env')} is {len(k)} chars, need {MIN_KEY_LEN}+; screen disabled",
+              file=sys.stderr)
+        return ""
+    return k
 
 
 def log(**kw):

@@ -15,7 +15,7 @@ VID = {"id": "v1", "kind": "video", "src": "data:video/mp4;base64,AA"}
 class Receiver(unittest.TestCase):
     def test_screens_from_config(self):
         self.assertEqual(sorted(cast.screens()), ["den", "tv", "wall"])
-        self.assertEqual(cast.screen_key("tv"), "tv-key-123")
+        self.assertEqual(cast.screen_key("tv"), "tv-key-0123456789abcdef0123456789abcdef")
         self.assertEqual(cast.screen_key("wall"), "")          # only a receiver has a key
 
     def test_cast_writes_the_page_and_now(self):
@@ -76,3 +76,12 @@ class Remote(unittest.TestCase):
 
 if __name__ == "__main__":
     unittest.main()
+
+
+class ShortKey(unittest.TestCase):
+    def test_short_key_disables_the_screen(self):
+        os.environ["TEST_TV_KEY"], old = "short", os.environ["TEST_TV_KEY"]
+        try:
+            self.assertEqual(cast.screen_key("tv"), "")
+        finally:
+            os.environ["TEST_TV_KEY"] = old

@@ -142,7 +142,7 @@ class Gate(unittest.TestCase):
         self.assertEqual(got[0]["caption"], "looks mirrored?")
 
     def msg(self, uid=OWNER, tid=777, text="hi"):
-        m = {"from": {"id": uid}, "chat": {"id": uid}, "message_id": 1, "message_thread_id": tid}
+        m = {"from": {"id": uid}, "chat": {"id": uid, "type": "private"}, "message_id": 1, "message_thread_id": tid}
         if text is not None:
             m["text"] = text
         return m
@@ -281,7 +281,7 @@ class Gate(unittest.TestCase):
             hl.EMAIL_SESSION = old
         ns = _mail_lane("notes")
         ns.HEAD_THREADS[OWNER] = 556
-        edit = lambda t: {"from": {"id": OWNER}, "chat": {"id": OWNER}, "message_id": 7, "message_thread_id": 556, "text": t}
+        edit = lambda t: {"from": {"id": OWNER}, "chat": {"id": OWNER, "type": "private"}, "message_id": 7, "message_thread_id": 556, "text": t}
         self.assertIsNone(ns.on_edit(edit("buy oat milk")))             # an edited note stays a note
         self.assertIsNotNone(ns.on_edit(edit("/j what's on the list?")))
 
@@ -525,7 +525,7 @@ class Turn(unittest.TestCase):
         io = io or FakeIO()
         call, calls = self.bridge(states, pane, tail)
         c = Clock()
-        hl._turn("t", {"chat": {"id": OWNER}, "message_id": 3, "message_thread_id": 777}, text,
+        hl._turn("t", {"chat": {"id": OWNER, "type": "private"}, "message_id": 3, "message_thread_id": 777}, text,
                  call=call, io=io, read=self.feed(*events), sleep=c.sleep, now=c.now)
         return io, calls
 
@@ -545,7 +545,7 @@ class Turn(unittest.TestCase):
         hl.EDITS = os.path.join(self.tmp, "edits.json")
         self.addCleanup(setattr, hl, "EDITS", os.path.join(_TMP, "edits.json"))
         hl.HEAD_THREADS[OWNER] = 777
-        self.assertEqual(hl.on_edit({"from": {"id": OWNER}, "chat": {"id": OWNER}, "message_id": 9,
+        self.assertEqual(hl.on_edit({"from": {"id": OWNER}, "chat": {"id": OWNER, "type": "private"}, "message_id": 9,
                                      "message_thread_id": 777, "text": "welp"}), "noted")
         io, calls = self.run_turn("next", [[ev("Stop", last_assistant_message="ok")]])
         sent = [c["text"] for c in calls if c["t"] == "send"][0]
@@ -566,7 +566,7 @@ class Turn(unittest.TestCase):
 
     def test_restart_mid_turn_delivers_the_answer(self):
         """18:44: a gateway restart mid-turn lost the head's answer."""
-        hl.save_inflight({"chat": {"id": OWNER}, "message_id": 3, "message_thread_id": 777, "_from_voice": True}, 40)
+        hl.save_inflight({"chat": {"id": OWNER, "type": "private"}, "message_id": 3, "message_thread_id": 777, "_from_voice": True}, 40)
         got = []
         self.assertEqual(hl.recover_inflight("t", enqueue=lambda tok, m: got.append(m)), "recovered")
         self.assertEqual((got[0]["message_id"], hl._state["ev_off"]), (3, 40))
@@ -580,7 +580,7 @@ class Turn(unittest.TestCase):
         self.assertFalse(os.path.exists(hl.INFLIGHT))
 
     def test_old_inflight_is_dropped_not_replayed(self):
-        hl.save_inflight({"chat": {"id": OWNER}, "message_id": 4}, 10, now=lambda: 0)
+        hl.save_inflight({"chat": {"id": OWNER, "type": "private"}, "message_id": 4}, 10, now=lambda: 0)
         got = []
         self.assertEqual(hl.recover_inflight("t", now=lambda: hl.TURN_TIMEOUT_S + 5, enqueue=lambda *a: got.append(a)), "stale")
         self.assertEqual(got, []); self.assertFalse(os.path.exists(hl.INFLIGHT))
@@ -605,7 +605,7 @@ class Turn(unittest.TestCase):
             return ([ev("Stop", last_assistant_message="ok")] if len(seen) > 1 else []), off
         call, _ = self.bridge()
         c = Clock()
-        hl._turn("t", {"chat": {"id": OWNER}, "message_id": 3}, "hi", call=call, io=FakeIO(), read=read,
+        hl._turn("t", {"chat": {"id": OWNER, "type": "private"}, "message_id": 3}, "hi", call=call, io=FakeIO(), read=read,
                  sleep=c.sleep, now=c.now)
         self.assertTrue(seen[0])
 
@@ -732,7 +732,7 @@ class Turn(unittest.TestCase):
                         [{"event": "PermissionAnswered", "perm_id": "abc123abc123"}]] + [[]] * 10
                        + [[ev("Stop", last_assistant_message="ok")]])
         io = FakeIO()
-        hl._turn("t", {"chat": {"id": OWNER}, "message_id": 3}, "x", call=call, io=io,
+        hl._turn("t", {"chat": {"id": OWNER, "type": "private"}, "message_id": 3}, "x", call=call, io=io,
                  read=lambda off: (next(batches, []), off), sleep=c.sleep, now=c.now)
         self.assertFalse(io.kinds("legacy"))
         self.assertEqual(io.kinds("answer"), [("answer", "ok")])
@@ -754,7 +754,7 @@ class Turn(unittest.TestCase):
 
     def test_typing_bar_renews_in_the_thread(self):
         API.clear()
-        m = {"chat": {"id": OWNER}, "message_id": 5, "message_thread_id": 777}
+        m = {"chat": {"id": OWNER, "type": "private"}, "message_id": 5, "message_thread_id": 777}
         with hl._Typing("t", m):
             import time as _t; _t.sleep(0.2)
         self.assertIn(("sendChatAction", {"chat_id": OWNER, "action": "typing", "message_thread_id": 777}), API)
@@ -787,7 +787,7 @@ class Visuals(unittest.TestCase):
 
     def test_answer_goes_as_a_rich_message(self):
         calls = self.capture()
-        io = hl._IO("t", {"chat": {"id": OWNER}, "message_id": 1, "message_thread_id": 777})
+        io = hl._IO("t", {"chat": {"id": OWNER, "type": "private"}, "message_id": 1, "message_thread_id": 777})
         ids = io.answer("| a | b |\n|---|---|\n| $1 | 2 |")
         self.assertEqual([c[0] for c in calls], ["sendRichMessage"])
         self.assertEqual(calls[0][1]["message_thread_id"], 777)
@@ -796,7 +796,7 @@ class Visuals(unittest.TestCase):
 
     def test_rejected_rich_falls_back_to_html(self):
         calls = self.capture(fail_rich=True)
-        io = hl._IO("t", {"chat": {"id": OWNER}, "message_id": 1})
+        io = hl._IO("t", {"chat": {"id": OWNER, "type": "private"}, "message_id": 1})
         ids = io.answer("**hi**")
         self.assertEqual([c[0] for c in calls], ["sendRichMessage", "sendMessage"])
         self.assertEqual(calls[1][1]["parse_mode"], "HTML")
@@ -804,19 +804,19 @@ class Visuals(unittest.TestCase):
 
     def test_too_long_for_rich_goes_in_parts(self):
         calls = self.capture()
-        io = hl._IO("t", {"chat": {"id": OWNER}, "message_id": 1})
+        io = hl._IO("t", {"chat": {"id": OWNER, "type": "private"}, "message_id": 1})
         io.answer("x\n" * (hl.RICH_LIMIT // 2 + 10))
         self.assertNotIn("sendRichMessage", [c[0] for c in calls])
 
     def test_answer_text_kept_for_show(self):
-        io = hl._IO("t", {"chat": {"id": OWNER}, "message_id": 1})
+        io = hl._IO("t", {"chat": {"id": OWNER, "type": "private"}, "message_id": 1})
         io.md = "the answer"; io.span = {"path": "/t", "start": 0, "end": 5}
         io.remember([88])
         self.assertEqual(json.load(open(hl.TURNS))["88"]["md"], "the answer")
 
     def test_show_queues_a_visual_request(self):
         hl.remember_turn([88], {"path": "/t", "start": 0, "end": 5, "md": "A -> B -> C pipeline"})
-        m = {"from": {"id": OWNER}, "chat": {"id": OWNER}, "message_id": 9, "message_thread_id": 777,
+        m = {"from": {"id": OWNER}, "chat": {"id": OWNER, "type": "private"}, "message_id": 9, "message_thread_id": 777,
              "text": "/show as a flowchart", "reply_to_message": {"message_id": 88}}
         hl.show("t", m)
         prompt = hl._q[0][1]
@@ -831,14 +831,14 @@ class Visuals(unittest.TestCase):
         real = hl.bridge
         hl.bridge = lambda req, wait=5: {"state": "idle", "ok": True}
         try:
-            self.assertTrue(hl.handle({"from": {"id": OWNER}, "chat": {"id": OWNER}, "message_id": 9, "message_thread_id": 777,
+            self.assertTrue(hl.handle({"from": {"id": OWNER}, "chat": {"id": OWNER, "type": "private"}, "message_id": 9, "message_thread_id": 777,
                                        "text": "/show", "reply_to_message": {"message_id": 88}}, "t"))
         finally:
             hl.bridge = real
         self.assertIn("X then Y", hl._q[0][1])
 
     def test_show_needs_a_reply(self):
-        hl.show("t", {"from": {"id": OWNER}, "chat": {"id": OWNER}, "message_id": 9, "text": "/show"})
+        hl.show("t", {"from": {"id": OWNER}, "chat": {"id": OWNER, "type": "private"}, "message_id": 9, "text": "/show"})
         self.assertEqual(len(hl._q), 0)
         self.assertTrue(any("Reply to one of my answers with /show" in s for s in SENT))
 
@@ -865,7 +865,7 @@ class Model(unittest.TestCase):
 
     def press(self, data="hd:m:sonnet", uid=OWNER, pane=PANE_MODEL):
         call, calls = self.bridge(pane)
-        cq = {"id": "c", "from": {"id": uid}, "message": {"chat": {"id": OWNER}, "message_id": 4}}
+        cq = {"id": "c", "from": {"id": uid}, "message": {"chat": {"id": OWNER, "type": "private"}, "message_id": 4}}
         hl.on_model_button(cq, data, "t", self.said.append, call=call)
         return calls
 
@@ -914,7 +914,7 @@ class Model(unittest.TestCase):
         real = hl.bridge
         hl.bridge = lambda req, wait=5: calls.append(req) or {"state": "idle", "ok": True}
         try:
-            hl.handle({"from": {"id": OWNER}, "chat": {"id": OWNER}, "message_id": 2, "message_thread_id": 777, "text": "/model"}, "t")
+            hl.handle({"from": {"id": OWNER}, "chat": {"id": OWNER, "type": "private"}, "message_id": 2, "message_thread_id": 777, "text": "/model"}, "t")
         finally:
             hl.bridge = real
         self.assertFalse(any(c["t"] == "send" for c in calls))
@@ -924,7 +924,7 @@ class Model(unittest.TestCase):
         hl.time.sleep, real = (lambda s: None), hl.time.sleep
         try:
             call, calls = self.bridge(PANE_MODEL)
-            hl.on_button({"id": "c", "from": {"id": OWNER}, "message": {"chat": {"id": OWNER}, "message_id": 4}},
+            hl.on_button({"id": "c", "from": {"id": OWNER}, "message": {"chat": {"id": OWNER, "type": "private"}, "message_id": 4}},
                          "hd:m:opus", "t", call=call)
         finally:
             hl.time.sleep = real
@@ -943,7 +943,7 @@ class Heal(unittest.TestCase):
             calls.append(req)
             return {"state": next(it, states[-1])} if req["t"] == "status" else {"ok": True, "detail": "started"}
         io, c, ev = FakeIO(), Clock(), iter(events)
-        hl._turn("t", {"chat": {"id": OWNER}, "message_id": 3}, "hi", call=call, io=io,
+        hl._turn("t", {"chat": {"id": OWNER, "type": "private"}, "message_id": 3}, "hi", call=call, io=io,
                  read=lambda off: (next(ev, []), off), sleep=c.sleep, now=c.now)
         return io, calls
 
@@ -1049,7 +1049,7 @@ class Thoughts(unittest.TestCase):
         self.assertEqual(io.kinds("remember"), [("remember", [100], {"path": "/t", "start": 5, "end": 90})])
 
     def msg(self, reply_to=None, uid=OWNER):
-        m = {"from": {"id": uid}, "chat": {"id": OWNER}, "message_id": 50, "message_thread_id": 777, "text": "/thoughts?"}
+        m = {"from": {"id": uid}, "chat": {"id": OWNER, "type": "private"}, "message_id": 50, "message_thread_id": 777, "text": "/thoughts?"}
         if reply_to:
             m["reply_to_message"] = {"message_id": reply_to}
         return m
@@ -1080,7 +1080,7 @@ class Thoughts(unittest.TestCase):
             pl._api = lambda tok, method, **kw: API.append((method, kw)) or {"ok": True}
 
     def test_real_io_remembers_only_a_closed_span(self):
-        io = hl._IO("t", {"chat": {"id": OWNER}, "message_id": 1})
+        io = hl._IO("t", {"chat": {"id": OWNER, "type": "private"}, "message_id": 1})
         io.span = {"path": self.tp, "start": 0}
         io.remember([5])
         self.assertFalse(os.path.exists(hl.TURNS))           # no end yet: nothing to point at
@@ -1123,7 +1123,7 @@ class PermButton(unittest.TestCase):
         self.said = []
 
     def press(self, uid=OWNER, data="hd:p:abc123abc123:a"):
-        cq = {"id": "c", "from": {"id": uid}, "message": {"chat": {"id": OWNER}, "message_id": 4, "text": "🔐"}}
+        cq = {"id": "c", "from": {"id": uid}, "message": {"chat": {"id": OWNER, "type": "private"}, "message_id": 4, "text": "🔐"}}
         hl.on_perm_button(cq, data, "t", self.said.append)
 
     def ans(self):
@@ -1155,7 +1155,7 @@ class PermButton(unittest.TestCase):
         self.assertIn("already closed", self.said[-1])
 
     def test_dispatch_from_on_button(self):
-        cq = {"id": "c", "from": {"id": OWNER}, "message": {"chat": {"id": OWNER}, "message_id": 4, "text": "🔐"}}
+        cq = {"id": "c", "from": {"id": OWNER}, "message": {"chat": {"id": OWNER, "type": "private"}, "message_id": 4, "text": "🔐"}}
         hl.on_button(cq, "hd:p:abc123abc123:a", "t", call=lambda r, wait=5: {"state": "busy"})
         self.assertEqual(self.ans(), "allow")
 
@@ -1202,7 +1202,7 @@ class Permission(unittest.TestCase):
 
     def cq(self, uid=OWNER, data="hd:1"):
         return {"id": "c1", "data": data, "from": {"id": uid},
-                "message": {"chat": {"id": OWNER}, "message_id": 9, "message_thread_id": 777, "text": "🔐 x",
+                "message": {"chat": {"id": OWNER, "type": "private"}, "message_id": 9, "message_thread_id": 777, "text": "🔐 x",
                             "reply_markup": {"inline_keyboard": [[{"text": "✅ Yes", "callback_data": "hd:1"}]]}}}
 
     def bridge(self, state, pane=None):
@@ -1304,7 +1304,7 @@ class Midturn(unittest.TestCase):
         hl._q.clear(); hl._state["worker"] = object()
 
     def m(self, text):
-        return {"from": {"id": OWNER}, "chat": {"id": OWNER}, "message_id": 3, "message_thread_id": 777, "text": text}
+        return {"from": {"id": OWNER}, "chat": {"id": OWNER, "type": "private"}, "message_id": 3, "message_thread_id": 777, "text": text}
 
     def test_written_only_while_running(self):
         hl._state["running"] = False
@@ -1335,7 +1335,7 @@ class Voice(unittest.TestCase):
         io = FakeIO()
         call, calls = t.bridge(("idle",))
         c = Clock()
-        m = {"chat": {"id": OWNER}, "message_id": 3, "message_thread_id": 777, "_from_voice": True}
+        m = {"chat": {"id": OWNER, "type": "private"}, "message_id": 3, "message_thread_id": 777, "_from_voice": True}
         hl._turn("t", m, "what's up", call=call, io=io, read=t.feed([ev("Stop", last_assistant_message="**All** good.\nVOICE: All good, Rav.")]),
                  sleep=c.sleep, now=c.now)
         self.assertEqual(io.kinds("answer"), [("answer", "**All** good.")])
@@ -1348,7 +1348,7 @@ class Voice(unittest.TestCase):
     def test_live_answer_goes_to_the_phone_speaker_else_a_voice_note(self):
         t = Turn("run"); t.setUp()
         c = Clock()
-        m = {"chat": {"id": OWNER}, "message_id": 3, "message_thread_id": 777, "_from_voice": True, "_live": True}
+        m = {"chat": {"id": OWNER, "type": "private"}, "message_id": 3, "message_thread_id": 777, "_from_voice": True, "_live": True}
         said = []
         old = hl.live_speak
         self.addCleanup(setattr, hl, "live_speak", old)
@@ -1390,7 +1390,7 @@ class Voice(unittest.TestCase):
         real = pl._send_document
         pl._send_document = lambda tok, m, path, caption, **k: sent.append((path, caption, k))
         try:
-            io = hl._IO("t", {"chat": {"id": OWNER}, "message_id": 1})
+            io = hl._IO("t", {"chat": {"id": OWNER, "type": "private"}, "message_id": 1})
             io.voice("Hello Rav.", render=lambda t: "/tmp/x.ogg")
         finally:
             pl._send_document = real
@@ -1400,7 +1400,7 @@ class Voice(unittest.TestCase):
 
     def test_io_voice_failure_said(self):
         said = []
-        io = hl._IO("t", {"chat": {"id": OWNER}, "message_id": 1})
+        io = hl._IO("t", {"chat": {"id": OWNER, "type": "private"}, "message_id": 1})
         io.say = said.append
         def boom(t):
             raise SystemExit("piper failed")
@@ -1414,7 +1414,7 @@ class Voice(unittest.TestCase):
         hl.transcribe = lambda p: "turn the lights on"
         hl.INBOX = os.path.join(_TMP, "inbox")
         try:
-            m = {"chat": {"id": OWNER}, "message_id": 5, "voice": {"file_id": "v"}}
+            m = {"chat": {"id": OWNER, "type": "private"}, "message_id": 5, "voice": {"file_id": "v"}}
             prompt = hl.media_to_text("t", m)
         finally:
             pl._download, hl.transcribe = real_dl, real_tr
@@ -1447,7 +1447,7 @@ class Stop(unittest.TestCase):
         real = hl.bridge
         hl.bridge = lambda req, wait=5: calls.append(req) or {"state": "busy", "ok": True}
         try:
-            hl.handle({"from": {"id": OWNER}, "chat": {"id": OWNER}, "message_id": 2, "message_thread_id": 777, "text": "/stop"}, "t")
+            hl.handle({"from": {"id": OWNER}, "chat": {"id": OWNER, "type": "private"}, "message_id": 2, "message_thread_id": 777, "text": "/stop"}, "t")
         finally:
             hl.bridge = real
         self.assertIn({"t": "key", "key": "Escape"}, calls)
@@ -1480,7 +1480,7 @@ class Reactions(unittest.TestCase):
         hl._q.clear(); API.clear(); SENT.clear()
 
     def r(self, uid=OWNER, mid=501, old=(), new=("👍",)):
-        return {"chat": {"id": uid}, "message_id": mid, "user": {"id": uid}, "date": 1,
+        return {"chat": {"id": uid, "type": "private"}, "message_id": mid, "user": {"id": uid}, "date": 1,
                 "old_reaction": [{"type": "emoji", "emoji": e} for e in old],
                 "new_reaction": [{"type": "emoji", "emoji": e} for e in new]}
 
@@ -1524,7 +1524,7 @@ class Video(unittest.TestCase):
 
     def test_round_video_not_refused(self):
         SENT.clear(); hl._q.clear()
-        m = {"from": {"id": OWNER}, "chat": {"id": OWNER}, "message_id": 5,
+        m = {"from": {"id": OWNER}, "chat": {"id": OWNER, "type": "private"}, "message_id": 5,
              "message_thread_id": hl.HEAD_THREADS[OWNER], "video_note": {"file_id": "x"}}
         started = []
         self.assertTrue(hl.handle(m, "t", prep=lambda tok, mm: started.append(mm)))
@@ -1540,7 +1540,7 @@ class Prep(unittest.TestCase):
         if os.path.exists(hl.MIDTURN):
             os.remove(hl.MIDTURN)
         SENT.clear()
-        self.m = {"from": {"id": OWNER}, "chat": {"id": OWNER}, "message_id": 8, "message_thread_id": 777, "video": {"file_id": "v"}}
+        self.m = {"from": {"id": OWNER}, "chat": {"id": OWNER, "type": "private"}, "message_id": 8, "message_thread_id": 777, "video": {"file_id": "v"}}
 
     def test_prepared_prompt_joins_the_queue(self):
         got = []
@@ -1550,7 +1550,7 @@ class Prep(unittest.TestCase):
     def test_text_is_not_held_behind_a_video(self):
         hl.HEAD_THREADS[OWNER] = 777
         hl.handle(self.m, "t", prep=lambda tok, m: None)                # the video is still being processed
-        hl.handle({"from": {"id": OWNER}, "chat": {"id": OWNER}, "message_id": 9, "message_thread_id": 777, "text": "hello"}, "t")
+        hl.handle({"from": {"id": OWNER}, "chat": {"id": OWNER, "type": "private"}, "message_id": 9, "message_thread_id": 777, "text": "hello"}, "t")
         self.assertEqual([t for _, t in hl._q], ["hello"])                # text went straight in
         hl._q.clear()
 
@@ -1604,13 +1604,13 @@ class ClipAuto(unittest.TestCase):
         hl.run_clip = lambda p: calls.append(p) or "sheet: /s.png"
         hl.INBOX = os.path.join(_TMP, "inbox")
         try:
-            p = hl.media_to_text("t", {"chat": {"id": OWNER}, "message_id": 5, "video_note": {"file_id": "v"}})
+            p = hl.media_to_text("t", {"chat": {"id": OWNER, "type": "private"}, "message_id": 5, "video_note": {"file_id": "v"}})
             self.assertEqual(len(calls), 1)
             self.assertIn("sheet: /s.png", p)
-            hl.media_to_text("t", {"chat": {"id": OWNER}, "message_id": 6, "photo": [{"file_id": "p"}]})
+            hl.media_to_text("t", {"chat": {"id": OWNER, "type": "private"}, "message_id": 6, "photo": [{"file_id": "p"}]})
             self.assertEqual(len(calls), 1)                             # photos are not clipped
             hl.run_clip = lambda p: None
-            p2 = hl.media_to_text("t", {"chat": {"id": OWNER}, "message_id": 7, "video": {"file_id": "v"}})
+            p2 = hl.media_to_text("t", {"chat": {"id": OWNER, "type": "private"}, "message_id": 7, "video": {"file_id": "v"}})
             self.assertIn("clip.py <that path>", p2)                    # falls back to the hint
             self.assertTrue(any("Couldn't pre-process" in x for x in SENT))
         finally:
@@ -1751,7 +1751,7 @@ class Ledger(unittest.TestCase):
             c.execute("DELETE FROM chat_log")
 
     def msg(self, mid, text=None, **kw):
-        m = {"from": {"id": OWNER, "username": "alex_owner"}, "chat": {"id": OWNER}, "message_id": mid,
+        m = {"from": {"id": OWNER, "username": "alex_owner"}, "chat": {"id": OWNER, "type": "private"}, "message_id": mid,
              "message_thread_id": 777, "date": 1, "text": text}
         m.update(kw); return m
 
@@ -1855,7 +1855,7 @@ class Ledger(unittest.TestCase):
         self.assertTrue(all("reply_parameters" not in p for p in parts[1:]))
 
     def edit(self, mid, text):
-        return {"from": {"id": OWNER}, "chat": {"id": OWNER}, "message_id": mid, "message_thread_id": 777, "text": text}
+        return {"from": {"id": OWNER}, "chat": {"id": OWNER, "type": "private"}, "message_id": mid, "message_thread_id": 777, "text": text}
 
     def test_edit_while_queued_replaces_the_text(self):
         self.inbound(self.msg(80, "wipe the board"), 8)
@@ -1932,7 +1932,7 @@ class Ledger(unittest.TestCase):
 
     def test_choice_tap_becomes_a_turn_once(self):
         hl._jsave(hl.BUTTONS, {"k1": {"text": "Which pumpkin?", "labels": ["Left", "Right"]}})
-        cq = {"id": "c", "from": {"id": OWNER}, "message": {"chat": {"id": OWNER}, "message_id": 90, "message_thread_id": 777}}
+        cq = {"id": "c", "from": {"id": OWNER}, "message": {"chat": {"id": OWNER, "type": "private"}, "message_id": 90, "message_thread_id": 777}}
         said, got = [], []
         self.assertEqual(hl.on_choice_button(cq, "hd:u:k1:1", "t", said.append, enqueue=lambda tok, m, t: got.append((m, t))), "chosen")
         self.assertEqual(got[0][1], "[alex tapped “Right” on your question: “Which pumpkin?”]")
@@ -1944,14 +1944,14 @@ class Ledger(unittest.TestCase):
 
     def test_choice_tap_routed_from_the_gateway_callback(self):
         hl._jsave(hl.BUTTONS, {"k3": {"text": "Go?", "labels": ["Yes", "No"]}})
-        cq = {"id": "c", "from": {"id": OWNER}, "message": {"chat": {"id": OWNER}, "message_id": 92, "message_thread_id": 777}}
+        cq = {"id": "c", "from": {"id": OWNER}, "message": {"chat": {"id": OWNER, "type": "private"}, "message_id": 92, "message_thread_id": 777}}
         hl.on_button(cq, "hd:u:k3:0", "t")
         self.assertEqual(hl._q[-1][1], "[alex tapped “Yes” on your question: “Go?”]")
         hl._q.clear()
 
     def test_choice_tap_by_anyone_else_refused(self):
         hl._jsave(hl.BUTTONS, {"k2": {"text": "q", "labels": ["A", "B"]}})
-        cq = {"id": "c", "from": {"id": USER_B}, "message": {"chat": {"id": OWNER}, "message_id": 91}}
+        cq = {"id": "c", "from": {"id": USER_B}, "message": {"chat": {"id": OWNER, "type": "private"}, "message_id": 91}}
         said, got = [], []
         self.assertIsNone(hl.on_choice_button(cq, "hd:u:k2:0", "t", said.append, enqueue=lambda *a: got.append(a)))
         self.assertEqual((got, said), ([], ["Not yours."]))
@@ -2002,7 +2002,7 @@ class Relay(unittest.TestCase):
         self.assertIn("through Shop", text)
         self.assertTrue(text.endswith("add a thing to Shop"))
         self.assertEqual(hl._tok_for(m, "HEAD-TOKEN"), "SHOP-TOKEN")
-        self.assertEqual(hl._tok_for({"chat": {"id": 1}}, "HEAD-TOKEN"), "HEAD-TOKEN")
+        self.assertEqual(hl._tok_for({"chat": {"id": 1, "type": "private"}}, "HEAD-TOKEN"), "HEAD-TOKEN")
         self.assertEqual(os.listdir(self.spool), ["relay.log"])             # consumed
 
     def _rows(self, like):
@@ -2018,7 +2018,7 @@ class Relay(unittest.TestCase):
         role, x = rows[0]
         self.assertEqual(role, "user")
         self.assertEqual((x["origin"], x["bot"], x["via"], x["message_id"], x["chat_id"]), ("shop", "Shop", "/j", 9001, OWNER))
-        self.assertFalse(cl.record_in({"message_id": 9001, "from": {"id": OWNER}, "chat": {"id": OWNER}}, "again", "shop"))  # once
+        self.assertFalse(cl.record_in({"message_id": 9001, "from": {"id": OWNER}, "chat": {"id": OWNER, "type": "private"}}, "again", "shop"))  # once
         m = {"message_id": 9001, "from": {"id": OWNER}, "chat": {"id": OWNER, "type": "private"}, "_relay": {"origin": "shop"}}
         real = pl._api; pl._api = lambda tok, method, **kw: {"ok": True, "result": {"message_id": 4711}}
         try:
@@ -2059,7 +2059,7 @@ class Relay(unittest.TestCase):
         self.assertTrue(rich[0]["rich_message"]["markdown"].startswith("Atlas says: Done."), rich[0]["rich_message"]["markdown"][:60])
         self.assertEqual(rich[0]["chat_id"], OWNER)
         self.assertEqual(rich[0]["reply_parameters"]["message_id"], 9001)
-        plain = hl._IO("SHOP-TOKEN", {"message_id": 1, "from": {"id": OWNER}, "chat": {"id": OWNER}})
+        plain = hl._IO("SHOP-TOKEN", {"message_id": 1, "from": {"id": OWNER}, "chat": {"id": OWNER, "type": "private"}})
         del API[:]
         plain.answer("Hi")
         rich = [kw for meth, kw in API if meth == "sendRichMessage"]
@@ -2071,9 +2071,9 @@ class Relay(unittest.TestCase):
         self._old = (hl.mark_stopped, list(hl._q))
         hl.mark_stopped = lambda *a, **k: marks.append(1)
         hl._q.clear()
-        mine = {"_relay": {"origin": "shop"}, "chat": {"id": OWNER}}
-        other = {"_relay": {"origin": "crm"}, "chat": {"id": OWNER}}
-        hl._q.extend([(mine, "a"), ({"chat": {"id": OWNER}}, "plain"), (other, "b"), (mine, "c")])
+        mine = {"_relay": {"origin": "shop"}, "chat": {"id": OWNER, "type": "private"}}
+        other = {"_relay": {"origin": "crm"}, "chat": {"id": OWNER, "type": "private"}}
+        hl._q.extend([(mine, "a"), ({"chat": {"id": OWNER, "type": "private"}}, "plain"), (other, "b"), (mine, "c")])
         return calls, replies, marks
 
     def _stop_teardown(self):
@@ -2306,7 +2306,7 @@ class DeleteThreadTest(unittest.TestCase):
 
     def _cq(self, data, uid=OWNER):
         return {"id": "q", "from": {"id": uid}, "data": data,
-                "message": {"message_id": 50, "chat": {"id": uid}, "text": "Delete?", "message_thread_id": 777001}}
+                "message": {"message_id": 50, "chat": {"id": uid, "type": "private"}, "text": "Delete?", "message_thread_id": 777001}}
 
     def setUp(self):
         self.lane = self.Lane("garden", 777001)
@@ -2437,7 +2437,7 @@ class UploadIndicatorTest(unittest.TestCase):
         pl._send_photo = slow; pl._send_document = slow
         try:
             io = hl._IO.__new__(hl._IO)
-            io.tok, io.m = "t", {"chat": {"id": 1}, "message_thread_id": 7}
+            io.tok, io.m = "t", {"chat": {"id": 1, "type": "private"}, "message_thread_id": 7}
             io.say = lambda *a: calls.append(("say",) + a)
             io.send_file(path)
         finally:
@@ -2487,7 +2487,7 @@ class ImageWorkIndicatorTest(unittest.TestCase):
         pl._api = lambda tok, method, **kw: sent.append(kw.get("action"))
         state = {"a": "typing"}
         try:
-            with hl._Typing("t", {"chat": {"id": 1}}, lambda: state["a"]) as t:
+            with hl._Typing("t", {"chat": {"id": 1, "type": "private"}}, lambda: state["a"]) as t:
                 time.sleep(0.05); state["a"] = "upload_photo"; t.stop.wait(4.3)
         finally:
             pl._api = orig
@@ -2530,7 +2530,7 @@ class ReplyToOwnMediaTest(unittest.TestCase):
         try:
             def boom(tok, m):
                 raise RuntimeError("HTTP Error 400: Bad Request")
-            hl._prep_media("t", {"video": {"file_id": "x"}, "caption": "This is great BTW!", "chat": {"id": 1}},
+            hl._prep_media("t", {"video": {"file_id": "x"}, "caption": "This is great BTW!", "chat": {"id": 1, "type": "private"}},
                            to_text=boom, enqueue=lambda tok, m, text: got.append(("queued", text)))
         finally:
             pl._reply, hl._react, hl.note_undelivered = orig
@@ -2602,7 +2602,7 @@ class UsageTest(unittest.TestCase):
         hl.bridge = lambda req, wait=5: calls.append(req) or {"state": "idle", "ok": True}
         try:
             uid = next(iter(hl.HEAD_UIDS)); tid = hl.HEAD_THREADS[uid]
-            m = {"message_id": 9, "chat": {"id": uid}, "from": {"id": uid}, "message_thread_id": tid, "text": "/config"}
+            m = {"message_id": 9, "chat": {"id": uid, "type": "private"}, "from": {"id": uid}, "message_thread_id": tid, "text": "/config"}
             self.assertTrue(hl.handle(m, "t"))
         finally:
             hl.bridge = real
@@ -2728,7 +2728,7 @@ class GoneCheck(unittest.TestCase):
         hl.GONE_OFF = self._off
 
     def m(self, mid=50, age=10.0, mark=True):
-        m = {"from": {"id": OWNER}, "chat": {"id": OWNER}, "message_id": mid, "message_thread_id": 777, "text": "Done"}
+        m = {"from": {"id": OWNER}, "chat": {"id": OWNER, "type": "private"}, "message_id": mid, "message_thread_id": 777, "text": "Done"}
         if mark:
             m["_gone_check"] = True
             m["_q_ts"] = 1000.0 - age
@@ -2787,7 +2787,7 @@ class GoneCheck(unittest.TestCase):
         self.assertEqual([kw for e, kw in self.log if kw.get("event2") == "dropped_deleted"], [])
 
     def test_plain_inbound_text_is_marked_and_timestamped_when_queued(self):
-        m = {"from": {"id": OWNER}, "chat": {"id": OWNER}, "message_id": 60, "message_thread_id": 777, "text": "hello"}
+        m = {"from": {"id": OWNER}, "chat": {"id": OWNER, "type": "private"}, "message_id": 60, "message_thread_id": 777, "text": "hello"}
         self.assertTrue(hl.handle(m, "t"))
         qm, qt = hl._q[0]
         self.assertTrue(qm["_gone_check"]); self.assertGreater(qm["_q_ts"], 0)
@@ -2927,7 +2927,7 @@ class MidturnOnce(GoneCheck):
 
     def test_message_mid_turn_is_keyed_and_its_queued_copy_skipped_once_delivered(self):
         hl._state["running"] = True
-        m = {"from": {"id": OWNER}, "chat": {"id": OWNER}, "message_id": 91, "message_thread_id": 777, "text": "also do X"}
+        m = {"from": {"id": OWNER}, "chat": {"id": OWNER, "type": "private"}, "message_id": 91, "message_thread_id": 777, "text": "also do X"}
         self.assertTrue(hl.handle(m, "t"))
         qm, qt = hl._q[0]
         self.assertTrue(qm.get("_mt"))
@@ -2943,7 +2943,7 @@ class MidturnOnce(GoneCheck):
         self.assertEqual(reacts, ["seen"], "👌 = taken mid-turn, not 👍 answered")
 
     def test_idle_message_gets_no_key(self):
-        m = {"from": {"id": OWNER}, "chat": {"id": OWNER}, "message_id": 92, "message_thread_id": 777, "text": "hi"}
+        m = {"from": {"id": OWNER}, "chat": {"id": OWNER, "type": "private"}, "message_id": 92, "message_thread_id": 777, "text": "hi"}
         hl.handle(m, "t")
         self.assertNotIn("_mt", hl._q[0][0])
         self.assertFalse(os.path.exists(hl.MIDTURN))
@@ -3198,3 +3198,15 @@ def test_parse_permission_skips_numbered_list_in_reply():
     assert [n for n, _ in p["options"]] == ["1", "2", "3"] and p["options"][0][1] == "Yes"
     assert p["title"] == "Bash command" and "Channel" not in p["detail"]
     assert hl.parse_permission(pane[:3]) is None
+
+
+class OwnerDmOnly(unittest.TestCase):
+    """Security review 2026-11-12: the owner's message in a GROUP topic with the same number as a head's topic was
+    taken as a turn and answered in that group."""
+
+    def test_group_topic_with_same_number_is_refused(self):
+        tid = next(iter(hl.HEAD_THREADS.values()))
+        m = {"from": {"id": OWNER}, "chat": {"id": -100123, "type": "supergroup"}, "message_id": 1,
+             "message_thread_id": tid, "text": "hi"}
+        self.assertFalse(hl._owner_dm(m, OWNER))
+        self.assertTrue(hl._owner_dm(dict(m, chat={"id": OWNER, "type": "private"}), OWNER))

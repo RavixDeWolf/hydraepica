@@ -2086,6 +2086,12 @@ def _lead_take(uid):
     return h["text"]
 
 
+def _owner_dm(m, uid):
+    """True when m sits in the owner's own private chat with the bot (a group topic with the same number is not it)."""
+    chat = m.get("chat") or {}
+    return chat.get("type") == "private" and chat.get("id") == uid
+
+
 def handle(m, tok, prep=None) -> bool:
     uid = (m.get("from") or {}).get("id")
     tid = m.get("message_thread_id")
@@ -2098,7 +2104,7 @@ def handle(m, tok, prep=None) -> bool:
             body = ""                          # a captionless photo of a "/j" album (Rav 2026-11-02): the head's too
         if body is None:
             return False
-        if uid not in HEAD_UIDS or HEAD_THREADS.get(uid) != tid:
+        if uid not in HEAD_UIDS or HEAD_THREADS.get(uid) != tid or not _owner_dm(m, uid):
             tgapi._log("head_refused_user", uid=uid, lane=_LANE)
             return True
         if jrelay.is_stop(body):
@@ -2112,7 +2118,7 @@ def handle(m, tok, prep=None) -> bool:
         m = dict(m, text=j_body(m["text"]))    # said "Unknown command: /j" and nothing came back, 2026-10-30)
     elif j_body(m.get("caption")):             # same for a photo's caption: raw, no turn ran and the lane waited (2026-11-04)
         m = dict(m, caption=j_body(m["caption"]))
-    if uid not in HEAD_UIDS or HEAD_THREADS.get(uid) != tid:
+    if uid not in HEAD_UIDS or HEAD_THREADS.get(uid) != tid or not _owner_dm(m, uid):
         tgapi._log("head_refused_user", uid=uid)
         return True
     text = m.get("text")

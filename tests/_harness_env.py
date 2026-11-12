@@ -70,5 +70,5 @@ lines = ["Nice try, Pat.", "Access denied.", "This line is for the owner only."]
 ''')
 os.environ["HARNESS_CONFIG"] = _CFG
 os.environ.setdefault("HARNESS_BOT_TOKEN", "123:test")
-os.environ.setdefault("TEST_TV_KEY", "tv-key-123")
+os.environ.setdefault("TEST_TV_KEY", "tv-key-0123456789abcdef0123456789abcdef")
 sys.path.insert(0, os.path.join(os.path.dirname(os.path.dirname(os.path.abspath(__file__))), "harness"))
