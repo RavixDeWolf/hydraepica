@@ -1,4 +1,6 @@
-# Harness
+# HydraEpica
+
+*Pocket command for a many-headed agent.*
 
 **An operations and safety layer for running Claude Code agents unattended, driven from your phone.**
 
