@@ -1,0 +1,80 @@
+# Copy to ~/.config/harness/config.toml (or point $HARNESS_CONFIG at it). Never commit the real one.
+
+[agent]
+name = "Atlas"                     # what the heads call themselves
+
+[telegram]
+bot_token_env = "HARNESS_BOT_TOKEN"   # the token lives in this env var, not in this file
+owner_id = 111111111               # your Telegram user id
+# chat_id defaults to owner_id (the bot's private chat with you, with topics enabled)
+
+[[users]]
+id = 111111111
+name = "alex"
+admin = true
+
+[[users]]
+id = 222222222
+name = "sam"
+
+[paths]
+state_dir = "~/.local/state/harness"
+work_root = "~/heads"
+
+[stt]                              # optional: speech-to-text for voice notes (whisper.cpp-style /inference)
+urls = []
+
+[mcp]
+hub_url = "http://127.0.0.1:9000/mcp"
+
+[exec.hosts]                       # hub exec tool: ssh aliases the exec tool may reach
+# build = "build-box"
+
+[[cameras]]                        # hub senses tool: still frames on request
+# name = "desk"
+# kind = "usb"                     # usb | rtsp | http
+# source = "/dev/video0"
+
+[gateway]
+# stranger_message = "Hi! This bot is private, sorry."
+# chat_system_prompt = "You are Atlas, a helpful assistant. Answer briefly."
+
+# Quick replies outside any head: tried in order, every fallback logged.
+[[llm.endpoints]]
+name = "local"
+url = "http://127.0.0.1:11434/v1/chat/completions"
+model = "llama3.1:8b"
+[[llm.endpoints]]
+name = "openrouter"
+url = "https://openrouter.ai/api/v1/chat/completions"
+model = "meta-llama/llama-3.1-8b-instruct"
+key_env = "OPENROUTER_API_KEY"
+
+# Product bots whose owner can /j the agent through them; each is answered by its own head lane.
+# [[bots]]
+# name = "shop"
+# label = "Shop"
+# token_file = "~/bots/shop/.env"
+# token_var = "BOT_TOKEN"            # omit when the file holds only the token
+
+# Optional: cast stage items to screens (TVs, wall displays). Each screen shows up as a button on the phone.
+# [[cast.screens]]
+# name = "tv"
+# kind = "receiver"                  # open <stage url>/screen/tv?k=<key> full screen on the TV's browser
+# key_env = "SCREEN_TV_KEY" # the screen's key, in that env var (any long random string)
+# [[cast.screens]]
+# name = "wall"
+# kind = "http"                      # your own display app: POST {"name","html"}; state updates POST {"name","state"}
+# url = "http://127.0.0.1:8080/api/cast"
+# [[cast.screens]]
+# name = "den"
+# kind = "ssh"                       # copy the page into dir on host, then POST {"name"} to show_url
+# host = "den-pc"
+# dir = "~/screen"
+# show_url = "http://den-pc.local:8781/api/show"
+
+# Optional: voice notes in the agent's voice (Piper TTS).
+# [voice]
+# piper = "~/piper/venv/bin/piper"
+# model = "~/piper/models/en_GB-alan-medium.onnx"
+# sample_rate = 22050

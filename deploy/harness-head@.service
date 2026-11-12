@@ -1,0 +1,25 @@
+[Unit]
+Description=Harness head "%i": a Claude Code REPL in tmux + the bridge that types into it
+After=network.target
+
+[Service]
+Type=simple
+Environment=HEAD_LANE=%i
+Environment=HEAD_STATE_DIR=%h/.local/state/harness/%i
+Environment=HEAD_SESSION=harness-head-%i
+Environment=HEAD_SOCKET=%h/.local/state/harness/%i/head.sock
+Environment=HEAD_LOG=%h/.local/state/harness/%i/bridge.log
+Environment=HEAD_CWD=%h/heads/%i
+# each head owns its tmux server (-L head-<name>): one crash of a shared server once took every REPL down with it
+Environment=HEAD_TMUX_L=head-%i
+# resume the lane's conversation; fall back to a fresh one only if there is none to continue
+Environment="HEAD_CMD=claude --continue || claude"
+ExecStartPre=/bin/mkdir -p %h/.local/state/harness/%i
+ExecStart=/usr/bin/python3 -B %h/harness/harness/head_bridge.py
+# the tmux server holds the REPL and lives in this cgroup: stop/restart kills only the bridge
+KillMode=process
+Restart=on-failure
+RestartSec=5
+
+[Install]
+WantedBy=default.target

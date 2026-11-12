@@ -1,0 +1,17 @@
+[Unit]
+Description=Harness stage: the phone Mini App server (and the cast receiver screens)
+After=network.target
+
+[Service]
+Type=simple
+EnvironmentFile=%h/.config/harness/secrets.env
+WorkingDirectory=%h/harness/harness/stage
+ExecStartPre=/bin/mkdir -p %h/.local/state/harness
+ExecStartPre=/bin/rm -f %h/.local/state/harness/stage.sock
+# a unix socket only: put your reverse proxy (HTTPS, the Mini App's public URL) in front of it
+ExecStart=%h/harness/.venv/bin/python -m uvicorn server:app --uds %h/.local/state/harness/stage.sock --log-level warning
+Restart=on-failure
+RestartSec=5
+
+[Install]
+WantedBy=default.target

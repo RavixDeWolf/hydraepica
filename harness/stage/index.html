@@ -1,0 +1,859 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+<title>Agent</title>
+<script src="https://telegram.org/js/telegram-web-app.js"></script>
+<style>
+  :root { --bg:#0d1016; --card:#151a23; --border:#262d3a; --text:#e7e9ee; --muted:#8a93a6; --accent:#4da3ff;
+          --accent-soft:rgba(77,163,255,.14); }
+  * { box-sizing:border-box; scrollbar-width:thin; scrollbar-color:rgba(77,163,255,.55) transparent; }
+  *::-webkit-scrollbar { width:6px; height:6px; }
+  *::-webkit-scrollbar-track { background:transparent; }
+  *::-webkit-scrollbar-thumb { background:rgba(77,163,255,.55); border-radius:6px; }
+  html, body { margin:0; background:var(--bg); color:var(--text);
+    font:15px/1.45 -apple-system, "Segoe UI", Roboto, sans-serif; }
+  main { padding:14px 14px calc(76px + env(safe-area-inset-bottom)); }
+  .view { display:none; } .view.active { display:block; }
+  h2 { font-size:16px; margin:4px 0 12px; color:#fff; }
+  .muted { color:var(--muted); font-size:13px; }
+  .item { background:var(--card); border:1px solid var(--border); border-radius:12px; padding:12px; margin-bottom:12px; }
+  .item h3 { margin:0 0 6px; font-size:15px; } .item .body { white-space:pre-wrap; }
+  .item img, .item video { width:100%; border-radius:8px; display:block; }
+  /* Rav 2026-10-26: a page on the stage filled only ~half the screen and scrolled inside its own box.
+     Size it to the visible viewport minus the stage bar, the nav and the timestamp. */
+  .item.html-item { padding:6px; }
+  .item iframe { width:100%; height:calc(var(--tg-viewport-stable-height, 100vh) - 190px); min-height:320px;
+                 border:0; border-radius:8px; background:#fff; display:block; }
+  .gal { display:grid; grid-template-columns:repeat(3,1fr); gap:6px; }
+  .gal img { width:100%; aspect-ratio:16/9; object-fit:cover; border-radius:6px; cursor:pointer; border:2px solid transparent; }
+  .gal img.cur { border-color:var(--accent); }
+  .gal-cast { font-size:12px; color:var(--accent); margin:0 0 8px; }
+  /* transport for a video on a screen (the screen is the player; the phone's copy is a muted mirror) */
+  .vc { margin-top:8px; } .vc .gal-cast { margin:0 0 6px; }
+  /* big, thumb-sized controls: the three buttons share the row */
+  .vc-seek { width:100%; height:32px; accent-color:var(--accent); cursor:pointer; margin:0 0 8px; }
+  .vc-row { display:flex; gap:10px; align-items:center; flex-wrap:wrap; }
+  .vc-row .btn { flex:1; min-height:60px; font-size:30px; line-height:1; }
+  .vc-t { flex-basis:100%; order:-1; text-align:right; color:var(--muted); font-size:15px; font-variant-numeric:tabular-nums; }
+  #lb { position:fixed; inset:0; background:#000e; z-index:50; display:none; flex-direction:column; cursor:default; }
+  #lb img { flex:1; min-height:0; width:100%; object-fit:contain; }
+  #lb .lb-bar { display:flex; gap:8px; padding:10px 12px calc(10px + env(safe-area-inset-bottom)); align-items:center; }
+  #lb .lb-intent { padding:0 12px 8px; font-size:13px; line-height:1.4; color:#c9cfdb; max-height:22vh; overflow:auto; }
+  #lb .lb-stars { display:none; justify-content:center; gap:4px; padding:0 12px 8px; } #lb .lb-stars button { font-size:34px; line-height:1; background:none; border:0; color:#5a6272; cursor:pointer; padding:4px; }
+  #lb .lb-stars button.on { color:var(--accent); } #lb .lb-stars button.bonus.on { color:#ffd54a; }
+  #lb .lb-intent:empty { display:none; } #lb .lb-intent b { color:var(--accent); }
+  #lb .lb-note { display:flex; gap:8px; padding:0 12px calc(10px + env(safe-area-inset-bottom)); }
+  #lb textarea { flex:1; background:var(--card); color:inherit; border:1px solid var(--border); border-radius:8px;
+                 padding:8px; font:inherit; font-size:14px; resize:none; }
+  #lb .lb-bar .muted { flex:1; text-align:center; font-size:13px; }
+  .item .when { color:var(--muted); font-size:11px; margin-top:8px; }
+  .item a { color:var(--accent); word-break:break-all; }
+  .cam-lane { max-width:38vw; padding-right:6px; text-overflow:ellipsis; }
+  .btn { cursor:pointer; background:var(--accent-soft); color:var(--accent); border:1px solid var(--border);
+         border-radius:8px; padding:7px 12px; font-size:13px; }
+  .row { display:flex; gap:8px; align-items:center; margin-bottom:12px; }
+  .bottom-nav { position:fixed; left:0; right:0; bottom:0; display:flex; background:#0a0d12;
+    border-top:1px solid var(--border); padding-bottom:max(6px, env(safe-area-inset-bottom)); }
+  .nav-item { flex:1; display:flex; flex-direction:column; align-items:center; gap:2px; padding:8px 0 4px;
+    background:none; border:0; color:var(--muted); font-size:10px; cursor:pointer; }
+  .nav-item .nav-icon { font-size:20px; } .nav-item.active { color:var(--accent); }
+  .kv { display:grid; grid-template-columns:auto 1fr; gap:6px 14px; }
+  #err { display:none; color:#ff8a8a; margin-bottom:12px; }
+  .btn:disabled { opacity:.35; cursor:default; }
+  .cam-box { padding:0; overflow:hidden; }
+  /* Rav 18:26: a tall portrait camera pushed Hold to talk off screen. Cap it so the button always fits above the nav. */
+  .cam-box video { width:100%; display:block; background:#000; height:calc(var(--tg-viewport-stable-height, 100vh) - 420px);
+                   min-height:180px; max-height:60vh; object-fit:cover; }
+  .cam-talk { width:100%; padding:22px; font-size:18px; margin-top:12px; user-select:none; -webkit-user-select:none; touch-action:none; }
+  .cam-talk.on { background:var(--accent); color:var(--bg); }
+  /* the camera toggle: a pill with a sliding knob, green when the feed is on (like a camera's light), no label */
+  .cam-sw { cursor:pointer; position:relative; width:46px; height:26px; border-radius:13px; border:1px solid var(--border);
+            background:#2a3140; padding:0; margin-right:4px; transition:background .2s; }
+  .cam-sw span { position:absolute; top:2px; left:2px; width:20px; height:20px; border-radius:50%; background:#8a93a6;
+                 transition:left .2s, background .2s; }
+  .cam-sw.on { background:#1f6f3f; border-color:#2ea35a; } .cam-sw.on span { left:22px; background:#3ddc6f; }
+  .cam-sw:disabled { opacity:.35; cursor:default; }
+  .cam-box { position:relative; }
+  /* TIK-1509: the Browser tab. A picture that could not be refreshed is dimmed AND said to be old - never shown as live. */
+  #b-shot.stale { opacity:.35; filter:grayscale(1); }
+  .b-open { display:flex; gap:8px; margin:8px 0; }
+  .b-open input { flex:1; min-width:0; box-sizing:border-box; padding:12px; font-size:16px; background:var(--card); color:var(--text);
+                  border:1px solid var(--border); border-radius:10px; }
+  .cam-paused { display:none; position:absolute; inset:0; align-items:center; justify-content:center; background:#000;
+                color:var(--muted); font-size:15px; letter-spacing:.3px; }
+  .cam-turn { margin-top:8px; gap:8px; } .cam-turn .btn { padding:12px 14px; } .cam-end { flex:1; font-weight:600; }
+  #cam-segs { margin-top:6px; font-size:13px; } .cam-seg { padding:3px 0; color:var(--muted); }
+  .cam-seg b { color:var(--text); font-weight:500; }
+  .cam-bar { display:none; align-items:center; gap:8px; margin-top:10px; padding:10px 12px; border-radius:10px;
+             background:var(--accent-soft); color:var(--accent); border:1px solid var(--border); }
+  .cam-bar.on { display:flex; }
+  .cam-dots::before { content:"●●●"; letter-spacing:2px; animation:campulse 1.2s ease-in-out infinite; }
+  @keyframes campulse { 0%,100% { opacity:.25 } 50% { opacity:1 } }
+  .icon-btn { cursor:pointer; background:none; border:1px solid var(--border); color:var(--text); border-radius:8px;
+              width:34px; height:32px; font-size:16px; line-height:1; }
+  .icon-btn:disabled { opacity:.3; cursor:default; }
+  .tabs { display:flex; gap:6px; margin-bottom:12px; }
+  .tab { cursor:pointer; flex:1; background:var(--card); border:1px solid var(--border); color:var(--muted);
+         border-radius:8px; padding:7px 0; font-size:13px; }
+  .tab.active { color:var(--accent); border-color:var(--accent); background:var(--accent-soft); }
+  .row-item { cursor:pointer; display:flex; align-items:center; gap:10px; background:var(--card);
+              border:1px solid var(--border); border-radius:10px; padding:10px 12px; margin-bottom:8px; }
+  .row-item.live { border-color:var(--accent); }
+  .row-item .t { flex:1; min-width:0; } .row-item .t b { display:block; overflow:hidden; text-overflow:ellipsis; white-space:nowrap; }
+  .row-item .k { font-size:18px; width:24px; text-align:center; }
+  .more { cursor:pointer; background:none; border:0; color:var(--muted); font-size:20px; padding:0 4px; }
+  .sheet-bg { position:fixed; inset:0; background:rgba(0,0,0,.55); display:none; z-index:20; cursor:default; }
+  .sheet { position:fixed; left:0; right:0; bottom:0; background:#121722; border-top:1px solid var(--border);
+           border-radius:14px 14px 0 0; padding:10px 12px calc(14px + env(safe-area-inset-bottom)); cursor:default; }
+  .sheet .grid { display:grid; grid-template-columns:1fr 1fr; gap:8px; }
+  .sheet button { cursor:pointer; background:var(--card); border:1px solid var(--border); color:var(--text);
+                  border-radius:10px; padding:12px; font-size:14px; text-align:left; }
+  .sheet button.danger { color:#ff8a8a; } .sheet h4 { margin:4px 2px 10px; font-size:14px; color:var(--muted); }
+  #toast { position:fixed; left:12px; right:12px; bottom:calc(70px + env(safe-area-inset-bottom)); display:none;
+           align-items:center; gap:10px; background:#1b2230; border:1px solid var(--border); border-radius:10px;
+           padding:10px 12px; z-index:30; }
+  #toast span { flex:1; }
+  .grid2 { display:grid; grid-template-columns:1fr 1fr; gap:10px; }
+  .tile { cursor:pointer; background:var(--card); border:1px solid var(--border); border-radius:12px; padding:16px 8px;
+          color:var(--text); display:flex; flex-direction:column; align-items:center; gap:6px; font-size:14px; }
+  .tile .big { font-size:30px; } .tile.on { border-color:var(--accent); background:var(--accent-soft); }
+  .tile[disabled] { cursor:default; opacity:.55; }
+  .companion { text-align:center; padding:28px 12px; } .companion .big { font-size:64px; }
+  .dev { display:grid; grid-template-columns:1fr auto; gap:8px 12px; align-items:center; }
+  .dev .name { font-weight:600; } .dev .state { color:var(--muted); font-size:13px; }
+  .switch { cursor:pointer; width:54px; height:30px; border-radius:15px; border:1px solid var(--border);
+            background:#222a36; position:relative; }
+  .switch::after { content:""; position:absolute; top:3px; left:3px; width:22px; height:22px; border-radius:50%;
+                   background:#8a93a6; transition:left .15s; }
+  .switch.on { background:var(--accent-soft); border-color:var(--accent); }
+  .switch.on::after { left:27px; background:var(--accent); }
+  .dev input[type=range] { grid-column:1 / -1; width:100%; accent-color:var(--accent); cursor:pointer; }
+</style>
+</head>
+<body>
+<main>
+  <div id="err"></div>
+  <section id="view-stage" class="view active">
+    <div id="mode-live">
+      <div class="row">
+        <button class="icon-btn" id="b-back" onclick="step(1)" title="Older">◀</button>
+        <button class="icon-btn" id="b-fwd" onclick="step(-1)" title="Newer">▶</button>
+        <h2 style="flex:1;margin:0">Stage</h2>
+        <button class="btn" id="b-save" onclick="liveAct('save')">Save</button>
+        <button class="btn" id="b-clear" onclick="clearStage()">Clear</button>
+        <button class="more" id="b-more" onclick="liveMore()" title="More">…</button>
+      </div>
+      <div id="items"><p class="muted">Nothing here yet. Ask <span data-agent>Agent</span> to show you something.</p></div>
+    </div>
+    <div id="mode-list" style="display:none">
+      <div class="row"><h2 id="list-title" style="flex:1;margin:0">Stages</h2></div>
+      <div class="tabs" id="tabs">
+        <button class="tab active" data-l="history" onclick="setList('history')">Recent</button>
+        <button class="tab" data-l="saved" onclick="setList('saved')">Saved</button>
+        <button class="tab" data-l="inbox" onclick="setList('inbox')">Inbox</button>
+      </div>
+      <div id="list"></div>
+    </div>
+  </section>
+  <section id="view-browser" class="view">
+    <div class="row"><h2 style="flex:1;margin:0"><span data-agent>Agent</span>'s browser</h2>
+      <span class="muted">Live</span><button class="cam-sw" id="b-live" role="switch" aria-checked="false" aria-label="Live view" onclick="browserLiveToggle()"><span></span></button>
+      <button class="btn" onclick="loadBrowser()">Refresh</button></div>
+    <div class="b-open" id="b-open" style="display:none">
+      <input id="b-url" type="url" inputmode="url" autocapitalize="off" autocorrect="off" spellcheck="false" maxlength="2048" placeholder="https://…" aria-label="Page to open in a new tab">
+      <button class="btn" id="b-open-go" onclick="browserOpen()">Open in a new tab</button></div>
+    <p id="b-title" class="muted"></p>
+    <div class="item"><img id="b-shot" alt=""></div>
+  </section>
+
+  <section id="view-cam" class="view">
+    <div class="row"><h2 style="flex:1;margin:0">Live</h2>
+      <button class="cam-sw" id="cam-sw" role="switch" aria-checked="false" aria-label="Camera" onclick="camVideoToggle()" disabled><span></span></button>
+      <button class="btn" id="cam-flip" onclick="camFlip()" disabled>Flip</button>
+      <select class="btn cam-lane" id="cam-lane" aria-label="Which head hears you" onchange="camLanePick(this.value)"></select>
+      <button class="btn" id="cam-go" onclick="camToggle()">Start</button></div>
+    <div class="item cam-box"><video id="cam-video" playsinline muted></video>
+      <div class="cam-paused" id="cam-paused">Video feed paused</div></div>
+    <div class="cam-bar" id="cam-bar"><span class="cam-dots"></span><span id="cam-bar-t"><span data-agent>Agent</span> is thinking…</span></div>
+    <button class="btn cam-talk" id="cam-talk" disabled>Hold to talk</button>
+    <div class="row cam-turn">
+      <button class="btn" id="cam-clear" onclick="camClear()" disabled>🗑</button>
+      <button class="btn cam-end" id="cam-end" onclick="camEnd()" disabled>➤ <span data-agent>Agent</span>'s turn</button>
+    </div>
+    <div id="cam-segs"></div>
+    <p id="cam-note" class="muted">Hold to talk as many times as you like; each clip is heard right away. Tap <span data-agent>Agent</span>'s turn when you're done.</p>
+  </section>
+
+  <section id="view-settings" class="view">
+    <h2>Settings</h2>
+    <div class="item kv">
+      <span class="muted">You</span><span id="s-me">…</span>
+      <span class="muted">Head mode</span><span id="s-mode">…</span>
+    </div>
+    <div class="item dev">
+      <div><div class="name">Save my place</div><div class="state">Reopen the app where you left it</div></div>
+      <button class="switch on" id="s-place" aria-label="Save my place" onclick="togglePlace()"></button>
+    </div>
+    <p class="muted">Settings here change only from this app, never from the chat: the head cannot alter them.</p>
+  </section>
+</main>
+<nav class="bottom-nav">
+  <button class="nav-item active" data-v="stage" id="nav-stage"><span class="nav-icon">🎭</span>Stage</button>
+  <button class="nav-item" data-v="browser" onclick="switchView('browser')"><span class="nav-icon">🌐</span>Browser</button>
+  <button class="nav-item" data-v="cam" id="nav-cam" style="display:none" onclick="switchView('cam')"><span class="nav-icon">👁</span>Live</button>
+  <button class="nav-item" data-v="settings" onclick="switchView('settings')"><span class="nav-icon">⚙️</span>Settings</button>
+</nav>
+<div id="lb"><img id="lb-img" alt=""><div class="lb-bar"><button class="btn" onclick="lbStep(-1)">◀</button>
+  <span class="muted" id="lb-cap"></span><button class="btn" onclick="lbStep(1)">▶</button><button class="btn" onclick="lbClose()">✕</button></div>
+  <div class="lb-stars" id="lb-stars"></div>
+  <div class="lb-intent" id="lb-intent"></div>
+  <div class="lb-note"><textarea id="lb-note" rows="2" placeholder="Note on this picture…"></textarea>
+  <button class="btn" id="lb-save" onclick="lbSaveNote()">Save</button></div></div>
+<div class="sheet-bg" id="sheet-bg" onclick="if (event.target === this) closeSheet()"><div class="sheet" id="sheet"></div></div>
+<div id="toast"><span id="toast-t"></span><button class="btn" id="toast-b">Undo</button></div>
+<script>
+const tg = window.Telegram && Telegram.WebApp;
+if (tg) { tg.ready(); tg.expand(); }
+const INIT = tg ? tg.initData : "";
+// a big stage video lives on the host's disk ("media:<person>/<file>") and streams from /api/media
+const mediaUrl = (src) => String(src || "").startsWith("media:")
+  ? "/api/media/" + encodeURIComponent(String(src).split("/").pop()) + "?init=" + encodeURIComponent(INIT) : src;
+const H = { "X-Init-Data": INIT };
+
+function showErr(t) { const e = document.getElementById("err"); e.textContent = t; e.style.display = t ? "block" : "none"; }
+async function api(path, opts) {
+  const r = await fetch(path, Object.assign({ headers: H }, opts || {}));
+  if (!r.ok) { const j = await r.json().catch(() => ({})); throw new Error(j.detail || r.status); }
+  return r.json();
+}
+function esc(s) { const d = document.createElement("div"); d.textContent = s == null ? "" : String(s); return d.innerHTML; }
+
+const KIND_ICON = { card: "📝", image: "🖼", video: "🎬", html: "🧩", url: "🔗", gallery: "🗂" };
+
+// ---- a video on a screen: the screen plays it; the phone shows where it is and drives it ----
+const vidCast = {};                        // video id -> screen name while it is on that screen
+let vcState = null, vcTimer = null;        // last {t, paused} from the screen
+const mmss = x => { x = Math.max(0, x | 0); return (x / 60 | 0) + ":" + String(x % 60).padStart(2, "0"); };
+function castCtl(cmd, t, to) {
+  to = to || Object.values(vidCast)[0];
+  return api("/api/castctl", { method: "POST", headers: Object.assign({ "Content-Type": "application/json" }, H),
+                               body: JSON.stringify({ to, cmd, t }) });
+}
+function vcShow(el) {
+  const s = vcState; if (!s || !el.isConnected) return;
+  const seek = el.querySelector(".vc-seek"), v = el.querySelector("video");
+  if (s.duration) seek.max = s.duration;
+  if (!seek.dragging) seek.value = s.t;
+  el.querySelector(".vc-t").textContent = mmss(s.t) + " / " + (s.duration ? mmss(s.duration) : "–:––") + (s.ended ? " · ended" : "");
+  el.querySelector('[data-c="toggle"]').textContent = s.paused ? "▶️" : "⏸";
+  if (v && v.readyState) { if (Math.abs(v.currentTime - s.t) > 0.6) v.currentTime = s.t;     
+                           if (s.paused && !v.paused) v.pause(); if (!s.paused && v.paused) v.play().catch(() => {}); }   // the mirror follows the screen
+}
+function vcWire(el, it) {
+  const go = async (cmd, t) => {
+    try { vcState = Object.assign(vcState || {}, await castCtl(cmd, t)); vcShow(el); }
+    catch (e) { toast(vidCast[it.id] + ": " + e.message); }
+  };
+  el.querySelector('[data-c="restart"]').onclick = () => go("restart");
+  el.querySelector('[data-c="toggle"]').onclick = () => go(vcState && !vcState.paused ? "pause" : "play");
+  el.querySelector('[data-c="stop"]').onclick = () => uncast(vidCast[it.id]);
+  const seek = el.querySelector(".vc-seek");
+  seek.oninput = () => { seek.dragging = true; el.querySelector(".vc-t").textContent = mmss(+seek.value) + " / " + mmss(+seek.max); };
+  seek.onchange = () => { seek.dragging = false; go("seek", +seek.value); };
+  clearInterval(vcTimer);
+  const poll = () => { if (!el.isConnected || !vidCast[it.id]) return clearInterval(vcTimer);
+                       castCtl("status").then(r => { vcState = r; vcShow(el); }).catch(() => {}); };
+  poll(); vcTimer = setInterval(poll, 1500);
+}
+
+// ---- gallery: tap a thumbnail for the big view; if the gallery is on a screen, the screen follows the phone ----
+const galCast = {};                        // gallery id -> screen name while it is on that screen
+let lb = null;                             // {it, i}
+function noteDirty() { return lb && document.getElementById("lb-note").value.trim() !== (lb.it.images[lb.i].note || ""); }
+function galPick(it, i) {
+  if (noteDirty()) lbSaveNote();          // moving on never loses a typed note
+  lb = { it, i }; const im = it.images[i];
+  document.getElementById("lb-img").src = im.src;
+  document.getElementById("lb-cap").textContent = (im.caption ? im.caption + " · " : "") + (i + 1) + "/" + it.images.length +
+                                                  (galCast[it.id] ? " · on " + galCast[it.id] : "");
+  document.getElementById("lb-intent").innerHTML = im.intent ? "<b>" + AGENT + "'s intent:</b> " + esc(im.intent) : "";
+  document.getElementById("lb-note").value = im.note || "";
+  document.getElementById("lb-save").textContent = "Save";
+  lbStars();
+  document.getElementById("lb").style.display = "flex";
+  document.querySelectorAll('.gal[data-id="' + it.id + '"] img').forEach((t, k) => t.classList.toggle("cur", k === i));
+  const to = galCast[it.id];
+  if (to) api("/api/act", { method: "POST", headers: Object.assign({ "Content-Type": "application/json" }, H),
+                            body: JSON.stringify({ where: "history", id: it.id, action: "pick", to, i }) })
+            .catch(e => toast(to + " did not follow: " + e.message));
+}
+function lbStars() {
+  const box = document.getElementById("lb-stars"), it = lb.it, im = it.images[lb.i], rated = it.images.filter(x => x.stars).length;
+  const on = !!it.images.some(x => x.video);
+  box.style.display = on ? "flex" : "none";
+  if (!on) return;
+  box.innerHTML = ""; for (let n = 1; n <= 6; n++) { const b = document.createElement("button"); b.textContent = "★";
+    b.className = (n <= (im.stars || 0) ? "on" : "") + (n === 6 ? " bonus" : ""); b.setAttribute("aria-label", n + " stars"); b.onclick = () => lbRate(n); box.appendChild(b); }
+  document.getElementById("lb-cap").textContent += " · rated " + rated + "/" + it.images.length;
+}
+async function lbRate(n) {
+  const { it, i } = lb, stars = it.images[i].stars === n ? 0 : n;
+  try {
+    await api("/api/act", { method: "POST", headers: Object.assign({ "Content-Type": "application/json" }, H),
+                            body: JSON.stringify({ where: "history", id: it.id, action: "rate", i, title: String(stars) }) });
+    it.images[i].stars = stars; document.getElementById("lb-cap").textContent = (it.images[i].caption || "") + " · " + (i + 1) + "/" + it.images.length; lbStars();
+  } catch (e) { toast("Rating not saved: " + e.message); }
+}
+async function lbSaveNote() {
+  if (!lb) return; const { it, i } = lb, text = document.getElementById("lb-note").value.trim();
+  try {
+    await api("/api/act", { method: "POST", headers: Object.assign({ "Content-Type": "application/json" }, H),
+                            body: JSON.stringify({ where: "history", id: it.id, action: "note", i, title: text }) });
+    it.images[i].note = text; document.getElementById("lb-save").textContent = "Saved ✓";
+  } catch (e) { toast("Note not saved: " + e.message); }
+}
+function lbStep(d) { if (lb) galPick(lb.it, (lb.i + d + lb.it.images.length) % lb.it.images.length); }
+function lbClose() { if (noteDirty()) lbSaveNote(); lbHide(); }
+function lbHide() { document.getElementById("lb").style.display = "none"; lb = null; }
+(() => { let x0 = null; const el = () => document.getElementById("lb");
+  addEventListener("touchstart", e => { if (lb && el().contains(e.target)) x0 = e.touches[0].clientX; }, { passive: true });
+  addEventListener("touchend", e => { if (x0 == null) return; const dx = e.changedTouches[0].clientX - x0; x0 = null;
+                                      if (Math.abs(dx) > 50) lbStep(dx < 0 ? 1 : -1); }); })();
+function render(it) {
+  const el = document.createElement("div"); el.className = "item";
+  const when = new Date(it.ts * 1000).toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" });
+  let inner = it.title ? `<h3>${esc(it.title)}</h3>` : "";
+  if (it.kind === "card") inner += `<div class="body">${esc(it.body)}</div>`;
+  if (it.kind === "image") inner += `<img src="${esc(it.src)}" alt="">` + (it.caption ? `<div class="muted">${esc(it.caption)}</div>` : "");
+  if (it.kind === "video") inner += (vidCast[it.id]
+      ? `<video src="${esc(mediaUrl(it.src))}" muted playsinline preload="metadata"></video>` +
+        `<div class="vc" data-id="${esc(it.id)}"><div class="gal-cast">On ${esc(vidCast[it.id])}: these buttons drive the screen</div>` +
+        `<input type="range" class="vc-seek" min="0" max="1" step="0.1" value="0">` +
+        `<div class="vc-row"><button class="btn" data-c="restart" title="From the top">⏮</button>` +
+        `<button class="btn" data-c="toggle" title="Play / pause">⏯</button>` +
+        `<button class="btn" data-c="stop" title="Stop casting">⏹</button><span class="vc-t">–:–– / –:––</span></div></div>`
+      : `<video src="${esc(mediaUrl(it.src))}" controls playsinline preload="metadata"></video>`) +
+      (it.caption ? `<div class="muted">${esc(it.caption)}</div>` : "");
+  if (it.kind === "url") inner += `<a href="${esc(it.url)}" target="_blank" rel="noopener">${esc(it.url)}</a>`;
+  if (it.kind === "gallery") inner += (galCast[it.id] ? `<div class="gal-cast">On ${esc(galCast[it.id])}: tap a picture to show it there</div>` : "") +
+                                     `<div class="gal" data-id="${esc(it.id)}"></div>`;
+  el.innerHTML = inner + `<div class="when">${when}</div>`;
+  if (it.kind === "video" && vidCast[it.id]) vcWire(el, it);
+  if (it.kind === "gallery") {
+    const g = el.querySelector(".gal");
+    (it.images || []).forEach((im, i) => { const t = document.createElement("img"); t.src = im.src; t.alt = im.caption || "";
+                                           t.loading = "lazy"; t.onclick = () => galPick(it, i); g.appendChild(t); });
+  }
+  if (it.kind === "html") {               // the agent-made pages run in a sandbox: no access to this app or its login
+    el.classList.add("html-item");
+    const f = document.createElement("iframe");
+    f.setAttribute("sandbox", "allow-scripts"); f.srcdoc = it.html || "";
+    el.insertBefore(f, el.querySelector(".when"));
+  }
+  return el;
+}
+
+// ---- state: live / history / saved / inbox / archive (lists are metadata; full items load on open) ----
+let st = { live: null, history: [], saved: [], inbox: [], archive: [] };
+let me = null, mode = "live", list = "history";
+let OTHERS_LIST = [], CAN_LIVE = false, AGENT = "Agent", SCREENS = [];
+const OTHERS = () => OTHERS_LIST;
+const cap = p => p[0].toUpperCase() + p.slice(1);
+
+function showLive() {
+  const box = document.getElementById("items"); box.innerHTML = "";
+  const it = st.live;
+  if (!it) box.innerHTML = '<p class="muted">' + (st.history.length ? "Stage is clear. ◀ goes back through your recent stages." :
+                                                 "Nothing here yet. Ask " + AGENT + " to show you something.") + "</p>";
+  else box.appendChild(render(it));
+  const i = it ? st.history.findIndex(h => h.id === it.id) : -1;
+  document.getElementById("b-back").disabled = !st.history.length || i >= st.history.length - 1;
+  document.getElementById("b-fwd").disabled = i <= 0;
+  ["b-save", "b-clear", "b-more"].forEach(id => document.getElementById(id).disabled = !it);
+}
+function rowFor(it, where) {
+  const el = document.createElement("div");
+  el.className = "row-item" + (where === "history" && st.live && st.live.id === it.id ? " live" : "");
+  const t = new Date((it.archived_ts || it.sent_ts || it.saved_ts || it.ts) * 1000);
+  const sub = (where === "inbox" ? "from " + cap(it.from || "?") + " · " : "") +
+              (where === "archive" ? "archived " : "") + t.toLocaleDateString([], { month: "short", day: "numeric" }) +
+              " " + t.toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" });
+  el.innerHTML = `<span class="k">${it.fav ? "★" : (KIND_ICON[it.kind] || "•")}</span>` +
+                 `<span class="t"><b>${esc(it.title || it.caption || it.kind)}</b><span class="muted">${esc(sub)}</span></span>`;
+  const m = document.createElement("button"); m.className = "more"; m.textContent = "…";
+  m.onclick = e => { e.stopPropagation(); openMenu(it, where); };
+  el.appendChild(m);
+  el.onclick = () => act(where, it.id, "show").then(() => setMode("live"));
+  return el;
+}
+function showList() {
+  const box = document.getElementById("list"); box.innerHTML = "";
+  const isArch = list === "archive";
+  document.getElementById("tabs").style.display = isArch ? "none" : "flex";
+  document.getElementById("list-title").textContent = isArch ? "Archive (kept 90 days)" : "Stages";
+  document.querySelectorAll(".tab").forEach(b => b.classList.toggle("active", b.dataset.l === list));
+  let rows = st[list] || [];
+  if (list === "saved") rows = [...rows].sort((a, b) => (b.fav ? 1 : 0) - (a.fav ? 1 : 0));
+  if (!rows.length) { box.innerHTML = '<p class="muted">' + ({ history: "No stages yet.", saved: "Nothing saved yet. Save a stage to keep it as a template.",
+                     inbox: "Nothing sent to you yet.", archive: "Archive is empty." })[list] + "</p>"; return; }
+  rows.forEach(it => box.appendChild(rowFor(it, list)));
+}
+function draw() { mode === "live" ? showLive() : showList(); }
+// ---- Save my place (Rav 20:53): the tab + stage view, kept per person in Telegram CloudStorage (synced to all his
+// devices); localStorage only where the client has no CloudStorage. Toggle in Settings, on by default.
+const PLACE_KEY = "place", SAVE_KEY = "save_place";
+let savePlace = true, curView = "stage", restoring = true;   // nothing is saved until the saved place is read back
+function hasCloud() { return !!(tg && tg.CloudStorage && tg.isVersionAtLeast && tg.isVersionAtLeast("6.9")); }
+function kvGet(k) {
+  return new Promise(res => {
+    if (hasCloud()) tg.CloudStorage.getItem(k, (e, v) => res(e ? null : v || null));
+    else { try { res(localStorage.getItem(k)); } catch (e) { res(null); } }
+  });
+}
+function kvSet(k, v) {
+  if (hasCloud()) { tg.CloudStorage.setItem(k, v, () => {}); return; }
+  try { localStorage.setItem(k, v); } catch (e) { /* private mode: nothing to keep */ }
+}
+function rememberPlace() {
+  if (savePlace && !restoring) kvSet(PLACE_KEY, JSON.stringify({ v: curView, mode, list }));
+}
+async function restorePlace() {
+  try {
+    savePlace = (await kvGet(SAVE_KEY)) !== "0";
+    document.getElementById("s-place").classList.toggle("on", savePlace);
+    if (!savePlace) return;
+    let p = null;
+    try { p = JSON.parse((await kvGet(PLACE_KEY)) || "null"); } catch (e) { p = null; }
+    if (!p || !document.getElementById("view-" + p.v) || (p.v === "cam" && !CAN_LIVE)) return;
+    if (p.v === "stage") { list = p.list || list; setMode(p.mode || "live"); }
+    switchView(p.v);
+  } finally { restoring = false; }
+}
+function togglePlace() {
+  savePlace = !savePlace;
+  kvSet(SAVE_KEY, savePlace ? "1" : "0");
+  if (savePlace) rememberPlace(); else kvSet(PLACE_KEY, "");
+  document.getElementById("s-place").classList.toggle("on", savePlace);
+  if (tg) tg.HapticFeedback.selectionChanged();
+}
+function setMode(m) {
+  mode = m;
+  rememberPlace();
+  document.getElementById("mode-live").style.display = m === "live" ? "" : "none";
+  document.getElementById("mode-list").style.display = m === "live" ? "none" : "";
+  draw();
+}
+function setList(l) { list = l; setMode("list"); }
+
+async function loadStage() { st = await api("/api/stage"); draw(); }
+async function act(where, id, action, to, title) {
+  try {
+    const r = await api("/api/act", { method: "POST", headers: Object.assign({ "Content-Type": "application/json" }, H),
+                                      body: JSON.stringify({ where, id, action, to, title }) });
+    await loadStage(); return r;
+  } catch (e) { showErr(action + " failed: " + e.message); throw e; }
+}
+async function clearStage() { await api("/api/clear", { method: "POST" }); await loadStage(); }
+function step(d) {                       // d=+1 older, -1 newer, through Recent
+  const i = st.live ? st.history.findIndex(h => h.id === st.live.id) : -1;
+  const j = i + d;
+  if (j >= 0 && j < st.history.length) act("history", st.history[j].id, "show");
+}
+function liveAct(a) { if (st.live) act("history", st.live.id, a).then(r => a === "save" && toast(r.already ? "Already saved" : "Saved to your Saved stages")); }
+function renameStage(where, it) {      // in-app sheet: Telegram's webview has no reliable prompt()
+  const s = document.getElementById("sheet");
+  s.innerHTML = `<h4>Rename stage</h4><input id="rn" maxlength="120" style="width:100%;box-sizing:border-box;padding:12px;font-size:16px;
+     background:var(--card);color:var(--text);border:1px solid var(--border);border-radius:10px;margin-bottom:10px">
+     <div class="grid"><button id="rn-cancel">Cancel</button><button id="rn-ok">✓ Rename</button></div>`;
+  const inp = document.getElementById("rn"); inp.value = it.title || "";
+  const ok = () => { const v = inp.value.trim(); if (!v) return; closeSheet();
+                     act(where, it.id, "rename", null, v).then(() => toast("Renamed to “" + v + "”")); };
+  document.getElementById("rn-ok").onclick = ok; document.getElementById("rn-cancel").onclick = closeSheet;
+  inp.onkeydown = e => { if (e.key === "Enter") ok(); };
+  document.getElementById("sheet-bg").style.display = "block"; setTimeout(() => inp.focus(), 50);
+}
+function liveMore() { if (st.live) openMenu(st.live, "history"); }
+
+// ---- the … menu ----
+function closeSheet() { document.getElementById("sheet-bg").style.display = "none"; }
+function sheet(title, buttons) {
+  const s = document.getElementById("sheet");
+  s.innerHTML = `<h4>${esc(title)}</h4><div class="grid"></div>`;
+  buttons.forEach(([label, fn, cls]) => {
+    const b = document.createElement("button"); b.textContent = label; if (cls) b.className = cls;
+    b.onclick = () => { closeSheet(); fn(); }; s.querySelector(".grid").appendChild(b);
+  });
+  document.getElementById("sheet-bg").style.display = "block";
+}
+function openMenu(it, where) {
+  const name = it.title || it.caption || it.kind, b = [];
+  b.push([where === "archive" ? "♻️ Restore" : "▶️ Show", () => act(where, it.id, "show").then(() => setMode("live"))]);
+  if (where !== "saved") b.push(["💾 Save", () => act(where, it.id, "save").then(r => toast(r.already ? "Already saved" : "Saved"))]);
+  b.push(["✏️ Rename", () => renameStage(where, it)]);
+  if (where === "saved") b.push([it.fav ? "☆ Unfavorite" : "★ Favorite", () => act(where, it.id, it.fav ? "unfav" : "fav")]);
+  b.push(["📤 Send…", () => sheet("Send “" + name + "” to", OTHERS().map(p =>
+          ["→ " + cap(p), () => act(where, it.id, "send", p).then(() => toast("Sent to " + cap(p) + "'s inbox"))]))]);
+  if (where !== "archive") b.push(["🗄 Archive", () => act(where, it.id, "archive").then(() => toast("Archived (90 days)"))]);
+  SCREENS.forEach(n => b.push(["📺 " + n, () => castTo(where, it, n)]));
+  if (SCREENS.length) b.push(["⏹ Stop casting…", () => sheet("Stop casting on", SCREENS.map(n => ["📺 " + n, () => uncast(n)]))]);
+  b.push(["🗑 Delete", () => softDelete(it, where), "danger"]);
+  sheet(name, b);
+}
+
+async function castTo(where, it, to) {
+  toast("Sending to " + to + "…");
+  try { const r = await act(where, it.id, "cast", to);
+        if (it.kind === "gallery") { Object.keys(galCast).forEach(k => { if (galCast[k] === to) delete galCast[k]; });
+                                     galCast[it.id] = to; showLive(); }
+        if (it.kind === "video") { Object.keys(vidCast).forEach(k => { if (vidCast[k] === to) delete vidCast[k]; });
+                                   vidCast[it.id] = to; showLive(); }
+        toast("On " + to + (r.warning ? " (" + r.warning + ")" : "")); }
+  catch (e) { toast(to + " failed: " + e.message); }
+}
+async function uncast(to) {
+  try {
+    await api("/api/uncast", { method: "POST", headers: Object.assign({ "Content-Type": "application/json" }, H), body: JSON.stringify({ to }) });
+    Object.keys(galCast).forEach(k => { if (galCast[k] === to) delete galCast[k]; });
+    Object.keys(vidCast).forEach(k => { if (vidCast[k] === to) delete vidCast[k]; }); showLive();
+    toast(to + " stopped");
+  } catch (e) { toast("Stop on " + to + " failed: " + e.message); }
+}
+
+// ---- delete with Undo: nothing is sent until the undo window closes ----
+let pending = null;
+function toast(t, undo) {
+  const el = document.getElementById("toast"), b = document.getElementById("toast-b");
+  document.getElementById("toast-t").textContent = t; b.style.display = undo ? "" : "none"; b.onclick = undo;
+  el.style.display = "flex"; clearTimeout(toast._t); toast._t = setTimeout(() => el.style.display = "none", undo ? 5000 : 2200);
+}
+function softDelete(it, where) {
+  if (pending) pending.commit();
+  const before = JSON.parse(JSON.stringify(st));
+  st[where] = st[where].filter(x => x.id !== it.id);
+  if (st.live && st.live.id === it.id) st.live = null;
+  draw();
+  const p = { commit: () => { clearTimeout(p.t); pending = null; act(where, it.id, "delete").catch(() => loadStage()); } };
+  p.t = setTimeout(p.commit, 5000); pending = p;
+  toast("Deleted “" + (it.title || it.kind) + "”", () => { clearTimeout(p.t); pending = null; st = before; draw();
+                                                           document.getElementById("toast").style.display = "none"; });
+}
+addEventListener("keydown", e => { if ((e.ctrlKey || e.metaKey) && e.key === "z" && pending) document.getElementById("toast-b").click(); });
+
+// ---- Stage nav button: tap toggles live <-> list, hold 2 s opens the Archive ----
+(function () {
+  const btn = document.getElementById("nav-stage"); let t = null, held = false;
+  const start = () => { held = false; t = setTimeout(() => { held = true; switchView("stage"); list = "archive"; setMode("list");
+                                                             if (tg) tg.HapticFeedback.impactOccurred("medium"); }, 2000); };
+  const end = () => { clearTimeout(t); };
+  btn.addEventListener("pointerdown", start); btn.addEventListener("pointerup", end);
+  btn.addEventListener("pointerleave", end); btn.addEventListener("pointercancel", end);
+  btn.addEventListener("contextmenu", e => e.preventDefault());
+  btn.addEventListener("click", () => {
+    if (held) return;
+    const onStage = document.getElementById("view-stage").classList.contains("active");
+    if (!onStage) { switchView("stage"); return; }
+    if (mode === "live") { list = list === "archive" ? "history" : list; setMode("list"); } else setMode("live");
+  });
+})();
+let bLive = null, bBusy = false;
+async function loadBrowser() {
+  if (bBusy) return;                                   // a slow screenshot must not stack up behind the 2 s timer
+  bBusy = true;
+  const img = document.getElementById("b-shot"), ttl = document.getElementById("b-title");
+  try {
+    const b = await api("/api/browser");
+    ttl.textContent = b.url ? `${b.title || ""} — ${b.url}` : (b.note || "");
+    img.src = b.src || ""; img.classList.remove("stale");
+  } catch (e) {                                        // TIK-1509 slice 4: say it, dim the old picture, never pass it off as live
+    img.classList.add("stale");
+    ttl.textContent = (/not answering/.test(e.message) ? AGENT + "'s browser is not answering" : "Browser unavailable") + " - the picture below is OLD (" + e.message + ")";
+  } finally { bBusy = false; }
+}
+function browserLiveToggle(force) {                    // TIK-1509 slice 3: a fresh frame every 2 s while this tab is open and the app is visible
+  const want = force === undefined ? !bLive : !!force, sw = document.getElementById("b-live");
+  if (want && !bLive) { loadBrowser(); bLive = setInterval(() => { if (!document.hidden) loadBrowser(); }, 2000); }
+  if (!want && bLive) { clearInterval(bLive); bLive = null; }
+  sw.classList.toggle("on", !!bLive); sw.setAttribute("aria-checked", String(!!bLive));
+}
+let bAdmin = null;
+async function browserShowOpen() {                     // the URL box is Rav's: the server refuses everyone else with 403 anyway
+  try { if (bAdmin === null) bAdmin = !!(await api("/api/me")).settings_admin; } catch (e) { bAdmin = false; }
+  document.getElementById("b-open").style.display = bAdmin ? "flex" : "none";
+}
+async function browserOpen() {                         // TIK-1509 slice 1
+  const inp = document.getElementById("b-url"), go = document.getElementById("b-open-go"), ttl = document.getElementById("b-title");
+  const url = inp.value.trim();
+  if (!url) return;
+  go.disabled = true;
+  try {
+    const r = await api("/api/browser/open", { method: "POST", headers: Object.assign({ "Content-Type": "application/json" }, H), body: JSON.stringify({ url }) });
+    inp.value = ""; ttl.textContent = "Opened in a new tab: " + r.url;
+    setTimeout(loadBrowser, 1500);                     // give the page a moment to paint before the next picture
+  } catch (e) { ttl.textContent = "Not opened: " + e.message; }
+  finally { go.disabled = false; }
+}
+async function loadSettings() {
+  const m = await api("/api/me"); const hd = await api("/api/head");
+  document.getElementById("s-me").textContent = m.person;
+  document.getElementById("s-mode").textContent = hd.mode || "unknown";
+}
+function switchView(v) {
+  document.querySelectorAll(".view").forEach(s => s.classList.toggle("active", s.id === "view-" + v));
+  document.querySelectorAll(".nav-item").forEach(b => b.classList.toggle("active", b.dataset.v === v));
+  if (v === "browser") { loadBrowser(); browserShowOpen(); } else if (bLive) browserLiveToggle(false);
+  if (v === "settings") loadSettings();
+  if (v !== "cam") camStop();
+  curView = v; rememberPlace();
+}
+// ---- Live (TIK-1025 step 2): a frame every 1.5 s to the host; hold to talk -> a turn for the main head ----
+let cam = null, camTimer = null, camFacing = "environment", camRec = null, camChunks = [], camSent = 0, camBusy = false;
+let camAudio = null, camNext = 0, camHold = 0, camSpeaking = false;
+// load the the agent voice on the host now (Start, and each talk press), so the answer's first sound skips the ~1 s load
+function camWarm() { fetch("/api/live/warm", { method: "POST", headers: H }).catch(() => {}); }
+// the agent's answer, spoken while it is still being made: raw s16le mono PCM streamed from the host, each chunk scheduled
+// right after the previous one so the speech is gap-free.
+async function camSpeak(id) {
+  if (!cam || !camAudio) return;                       // only while Live is on (the lane falls back to a voice note)
+  try {
+    const r = await fetch("/api/live/voice/" + id, { headers: H });
+    if (!r.ok) throw new Error((await r.json().catch(() => ({}))).detail || r.status);
+    const rate = +(r.headers.get("X-Sample-Rate") || 22050), rd = r.body.getReader();
+    let carry = null, started = false;
+    camNext = Math.max(camNext, camAudio.currentTime + 0.05);
+    for (;;) {
+      const { done, value } = await rd.read();
+      if (done) break;
+      let bytes = value;
+      if (carry) { const b = new Uint8Array(carry.length + value.length); b.set(carry); b.set(value, carry.length); bytes = b; carry = null; }
+      if (bytes.length % 2) { carry = bytes.slice(-1); bytes = bytes.slice(0, -1); }
+      if (bytes.byteOffset % 2) bytes = bytes.slice();       // Int16Array needs an even offset
+      const pcm = new Int16Array(bytes.buffer, bytes.byteOffset, bytes.length / 2);
+      if (!pcm.length) continue;
+      const buf = camAudio.createBuffer(1, pcm.length, rate), ch = buf.getChannelData(0);
+      for (let i = 0; i < pcm.length; i++) ch[i] = pcm[i] / 32768;
+      const src = camAudio.createBufferSource(); src.buffer = buf; src.connect(camAudio.destination);
+      src.start(camNext); camNext += buf.duration;
+      if (!started) { started = true; camSpeaking = true; camBar("🔊 " + AGENT + " is answering…"); }
+    }
+    // the bar stays until the last chunk has actually played
+    setTimeout(() => { camSpeaking = false; camBar(""); }, Math.max(0, (camNext - camAudio.currentTime) * 1000) + 200);
+  } catch (e) { camSpeaking = false; camBar(""); camNote("Couldn't play the answer: " + e.message); }
+}
+function camNote(t) { document.getElementById("cam-note").textContent = t; }
+// Rav 20:45: Start/Stop is the SESSION (mic, speaker, hearing the agent). The pill toggle is only the camera: off = no
+// frames sent (never black ones), the view goes dark with "Video feed paused"; talking and hearing the agent carry on.
+let camVideoOn = true, camBeatT = null;
+function camUi(on) {
+  document.getElementById("cam-go").textContent = on ? "Stop" : "Start";
+  document.getElementById("cam-flip").disabled = !on || !camVideoOn;
+  document.getElementById("cam-talk").disabled = !on;
+  const sw = document.getElementById("cam-sw");
+  sw.disabled = !on; sw.classList.toggle("on", on && camVideoOn); sw.setAttribute("aria-checked", String(on && camVideoOn));
+  document.getElementById("cam-paused").style.display = on && !camVideoOn ? "flex" : "none";
+  camSegsUi();
+}
+function camVideoToggle() {
+  if (!cam) return;
+  camVideoOn = !camVideoOn;
+  cam.getVideoTracks().forEach(t => { t.enabled = camVideoOn; });
+  camNote(camVideoOn ? "Video feed on." : "Video feed paused: " + AGENT + " gets no frames. Talking still works.");
+  if (tg) tg.HapticFeedback.selectionChanged();
+  camUi(true);
+}
+// the page tells the host it is listening every 3 s, so a paused camera never reads as "Live closed"
+function camBeat() { fetch("/api/live/beat", { method: "POST", headers: H }).catch(() => {}); }
+async function camStart() {
+  if (!navigator.mediaDevices || !navigator.mediaDevices.getUserMedia) { camNote("This Telegram build gives the page no camera (no mediaDevices)."); return; }
+  try {
+    cam = await navigator.mediaDevices.getUserMedia({ video: { facingMode: camFacing, width: { ideal: 1280 } }, audio: true });
+  } catch (e) { camNote("Camera refused: " + e.name + (e.message ? " - " + e.message : "")); return; }
+  const v = document.getElementById("cam-video"); v.srcObject = cam; await v.play().catch(() => {});
+  // the Start tap is the user gesture phones need before a page may play sound: open the speaker now
+  try { camAudio = camAudio || new (window.AudioContext || window.webkitAudioContext)(); await camAudio.resume(); }
+  catch (e) { camNote("Speaker unavailable: " + e.message); }
+  camWarm();
+  camVideoOn = true;
+  camSent = 0; camTimer = setInterval(camSnap, 1500);
+  camBeat(); camBeatT = setInterval(camBeat, 3000);
+  camUi(true); camNote("Live on.");
+}
+function camStop() {
+  if (camTimer) clearInterval(camTimer); camTimer = null;
+  if (camBeatT) clearInterval(camBeatT); camBeatT = null;
+  if (camRec && camRec.state !== "inactive") camRec.stop();
+  if (cam) cam.getTracks().forEach(t => t.stop()); cam = null;
+  const v = document.getElementById("cam-video"); if (v) v.srcObject = null;
+  fetch("/api/live/beat?off=1", { method: "POST", headers: H }).catch(() => {});   // answers now go to Telegram
+  camUi(false);
+}
+function camToggle() { cam ? camStop() : camStart(); }
+// Rav 2026-10-30: pick which head (thread) Live talks to; remembered on this phone, the main head by default
+let camLane = "main";
+try { camLane = localStorage.getItem("liveLane") || "main"; } catch (e) {}
+function camLanePick(v) { camLane = v || "main"; try { localStorage.setItem("liveLane", camLane); } catch (e) {} }
+async function camLanes() {
+  const sel = document.getElementById("cam-lane");
+  try {
+    const r = await fetch("/api/live/lanes", { headers: H });
+    if (!r.ok) throw new Error(r.status);
+    const ls = (await r.json()).lanes || [];
+    sel.innerHTML = "";
+    for (const l of ls) { const o = document.createElement("option"); o.value = l.lane; o.textContent = l.name; sel.appendChild(o); }
+    if (!ls.some(l => l.lane === camLane)) camLanePick("main");
+    sel.value = camLane;
+  } catch (e) { sel.innerHTML = '<option value="main">' + esc(AGENT) + '</option>'; camLanePick("main"); }
+}
+camLanes();
+async function camFlip() {          // swap ONLY the camera; the mic, the speaker and the open turn are untouched
+  if (!cam || !camVideoOn) return;
+  camFacing = camFacing === "environment" ? "user" : "environment";
+  try {
+    const nv = await navigator.mediaDevices.getUserMedia({ video: { facingMode: camFacing, width: { ideal: 1280 } } });
+    cam.getVideoTracks().forEach(t => { cam.removeTrack(t); t.stop(); });
+    cam.addTrack(nv.getVideoTracks()[0]);
+    const v = document.getElementById("cam-video"); v.srcObject = cam; await v.play().catch(() => {});
+  } catch (e) { camNote("Couldn't flip: " + e.message); }
+}
+async function camSnap() {
+  const v = document.getElementById("cam-video");
+  if (!camVideoOn || !v.videoWidth || camBusy) return;   // paused: send nothing at all
+  camBusy = true;
+  try {
+    const c = document.createElement("canvas"), s = Math.min(1, 960 / v.videoWidth);
+    c.width = Math.round(v.videoWidth * s); c.height = Math.round(v.videoHeight * s);
+    c.getContext("2d").drawImage(v, 0, 0, c.width, c.height);
+    const blob = await new Promise(r => c.toBlob(r, "image/jpeg", 0.7));
+    const r = await fetch("/api/live/frame", { method: "POST", headers: Object.assign({ "Content-Type": "image/jpeg" }, H), body: blob });
+    if (!r.ok) throw new Error((await r.json().catch(() => ({}))).detail || r.status);
+    camSent++; if (!camRec) camNote(camSent + " frames sent.");
+  } catch (e) { camNote("Frame failed: " + e.message); } finally { camBusy = false; }
+}
+function camTalkDown(e) {
+  e.preventDefault();
+  if (!cam || camRec) return;
+  const a = cam.getAudioTracks(); if (!a.length) { camNote("No microphone in this stream."); return; }
+  try { camRec = new MediaRecorder(new MediaStream(a)); } catch (err) { camNote("Recording refused: " + err.message); return; }
+  camChunks = [];
+  camRec.ondataavailable = ev => { if (ev.data.size) camChunks.push(ev.data); };
+  camRec.onstop = camSend;
+  camRec.start(); camHold = Date.now(); document.getElementById("cam-talk").classList.add("on"); camNote("Listening…");
+  camWarm();
+  if (tg) tg.HapticFeedback.impactOccurred("light");
+}
+function camTalkUp(e) {
+  e.preventDefault();
+  if (camRec && camRec.state !== "inactive") camRec.stop();
+  document.getElementById("cam-talk").classList.remove("on");
+}
+// Rav 20:12: many holds per turn, each heard the moment it is released; "the agent's turn" ends the turn.
+let camSegs = [], camUploads = 0;
+function camSegsUi() {
+  document.getElementById("cam-segs").innerHTML = camSegs.map(s =>
+    `<div class="cam-seg">${s.i} · ${s.state === "transcribing" ? "👂 hearing…" : s.state === "unheard" ? "⚠️ couldn't make it out"
+      : "<b>“" + esc(s.text) + "”</b>"}</div>`).join("");
+  const any = camSegs.length > 0;
+  document.getElementById("cam-end").disabled = !any;            // the clips are already on the host: no camera needed
+  document.getElementById("cam-clear").disabled = !any;
+  document.getElementById("cam-end").textContent = "➤ " + AGENT + "'s turn" + (any ? ` (${camSegs.length})` : "");
+}
+function camBar(text) {
+  const b = document.getElementById("cam-bar");
+  b.classList.toggle("on", !!text);
+  if (text) document.getElementById("cam-bar-t").textContent = text;
+}
+async function camSend() {
+  const type = (camRec && camRec.mimeType) || "audio/webm";
+  camRec = null;
+  const blob = new Blob(camChunks, { type });
+  if (blob.size < 2000) { camNote("Too short - hold the button while you talk."); return; }
+  const held = camHold ? Date.now() - camHold : 0;          // the frames cover the WHOLE hold
+  camUploads++;
+  try {
+    const r = await fetch("/api/live/segment", { method: "POST", headers: Object.assign({ "Content-Type": type, "X-Hold-Ms": String(held) }, H), body: blob });
+    const j = await r.json().catch(() => ({}));
+    if (!r.ok) throw new Error(j.detail || r.status);
+    if (j.i === 1) camSegs = [];                              // the server started a fresh turn
+    if (!camSegs.find(s => s.i === j.i)) camSegs.push({ i: j.i, state: "transcribing", text: "" });
+    camSegsUi(); camNote("Keep going, or tap " + AGENT + "'s turn.");
+    if (tg) tg.HapticFeedback.impactOccurred("light");
+  } catch (e) { camNote("Couldn't keep that clip: " + e.message); }
+  finally { camUploads--; }
+}
+async function camEnd() {
+  for (let i = 0; i < 40 && camUploads > 0; i++) await new Promise(r => setTimeout(r, 100));   // last clip still uploading
+  document.getElementById("cam-end").disabled = true;
+  camBar(AGENT + " is thinking…");
+  try {
+    const r = await fetch("/api/live/end", { method: "POST", headers: Object.assign({ "X-Live-Lane": camLane }, H) });
+    const j = await r.json().catch(() => ({}));
+    if (!r.ok) throw new Error(j.detail || r.status);
+    camSegs = []; camSegsUi(); camWarm(); camNote("");
+    if (tg) tg.HapticFeedback.notificationOccurred("success");
+  } catch (e) { camBar(""); camNote("⚠️ " + e.message); camSegsUi(); }
+}
+async function camClear() {
+  await fetch("/api/live/clear", { method: "POST", headers: H }).catch(() => {});
+  camSegs = []; camSegsUi(); camNote("Cleared. Hold to talk to start again.");
+}
+(() => {
+  const b = document.getElementById("cam-talk");
+  b.addEventListener("pointerdown", camTalkDown); b.addEventListener("pointerup", camTalkUp);
+  b.addEventListener("pointercancel", camTalkUp); b.addEventListener("contextmenu", e => e.preventDefault());
+  // the camera must stop when hidden (Telegram suspends it anyway); coming back with Live on resumes it, no extra tap
+  let camResume = false;
+  document.addEventListener("visibilitychange", () => {
+    if (document.hidden) { camResume = !!cam; camStop(); }
+    else if (camResume && document.getElementById("view-cam").classList.contains("active")) { camResume = false; camStart(); }
+  });
+})();
+function live() {
+  const es = new EventSource("/api/events?init=" + encodeURIComponent(INIT));
+  es.onmessage = m => {
+    const ev = JSON.parse(m.data);
+    if (ev.type === "speak") { camSpeak(ev.id); return; }
+    if (ev.type === "seg") {
+      const s = camSegs.find(x => x.i === ev.i);
+      if (s) { s.state = ev.state; s.text = ev.text; } else camSegs.push({ i: ev.i, state: ev.state, text: ev.text });
+      camSegsUi(); return;
+    }
+    if (ev.type === "live") {
+      if (ev.state === "heard") camBar(AGENT + " is thinking…");
+      else if (ev.state === "unheard") { camBar(""); camNote("⚠️ Couldn't make that out. Hold the button while you talk."); }
+      else if (ev.state === "answered") { if (!camSpeaking) camBar(""); }
+      return;
+    }
+    const prevLive = st.live && st.live.id;
+    if (ev.type === "state" || ev.type === "inbox") loadStage().then(() => {
+      if (ev.type === "inbox") { toast("New in your Inbox from " + cap(ev.item.from || "?")); if (tg) tg.HapticFeedback.notificationOccurred("success"); }
+      else if (st.live && st.live.id !== prevLive && !pending) { switchView("stage"); setMode("live"); }
+    });
+  };
+  es.onerror = () => { es.close(); setTimeout(live, 4000); };
+}
+(async () => {
+  if (!INIT) { showErr("Open this from the bot in Telegram."); return; }
+  try {
+    const who = await api("/api/me"); me = who.person; OTHERS_LIST = who.others || []; CAN_LIVE = !!who.live; SCREENS = who.screens || [];
+    AGENT = who.agent || AGENT; document.title = AGENT;
+    document.querySelectorAll("[data-agent]").forEach(e => e.textContent = AGENT);
+    if (CAN_LIVE) {
+      document.getElementById("nav-cam").style.display = "";
+      // clips recorded before the app was closed are still on the host: show them, still sendable
+    }
+    await loadStage(); live();
+    await restorePlace();                       // back where he was (Settings > Save my place)
+    if (CAN_LIVE) {
+      // clips recorded before the app was closed are still on the host: show them, still sendable (beats the saved place)
+      const t = await api("/api/live/turn").catch(() => ({ segments: [] }));
+      if (t.segments && t.segments.length) {
+        camSegs = t.segments; camSegsUi(); switchView("cam");
+        camNote(t.segments.length + " clip(s) from before are waiting. Tap " + AGENT + "'s turn to send, or 🗑.");
+      }
+    }
+  } catch (e) { showErr("Couldn't load: " + e.message); }
+})();
+</script>
+</body>
+</html>

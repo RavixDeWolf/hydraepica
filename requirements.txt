@@ -1,0 +1,9 @@
+# runtime
+fastapi>=0.110
+uvicorn>=0.29
+pillow>=10
+mcp>=2.3          # only for mcp/hub.py
+websockets>=12    # only for the stage's optional browser view
+# tests
+pytest>=7
+httpx>=0.27

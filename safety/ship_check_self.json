@@ -1,0 +1,10 @@
+{
+ "name": "ship_check checking itself",
+ "cwd": ".",
+ "mutants": {
+  "target": "./ship_check.py",
+  "test": "python3 test_ship_check.py",
+  "file": "./mutants_ship_check.py",
+  "timeout": 120
+ }
+}

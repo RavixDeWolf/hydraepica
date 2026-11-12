@@ -1,0 +1,101 @@
+{
+ "hooks": {
+  "SessionStart": [
+   {
+    "hooks": [
+     {
+      "type": "command",
+      "command": "$HOME/harness/harness/hooks/head_hook.py",
+      "timeout": 10
+     }
+    ]
+   }
+  ],
+  "UserPromptSubmit": [
+   {
+    "hooks": [
+     {
+      "type": "command",
+      "command": "$HOME/harness/harness/hooks/head_hook.py",
+      "timeout": 10
+     }
+    ]
+   }
+  ],
+  "PreToolUse": [
+   {
+    "matcher": "*",
+    "hooks": [
+     {
+      "type": "command",
+      "command": "$HOME/harness/harness/hooks/head_hook.py",
+      "timeout": 10
+     }
+    ]
+   }
+  ],
+  "PostToolUse": [
+   {
+    "matcher": "*",
+    "hooks": [
+     {
+      "type": "command",
+      "command": "$HOME/harness/harness/hooks/head_hook.py",
+      "timeout": 10
+     }
+    ]
+   }
+  ],
+  "PermissionRequest": [
+   {
+    "matcher": "*",
+    "hooks": [
+     {
+      "type": "command",
+      "command": "$HOME/harness/harness/hooks/head_hook.py",
+      "timeout": 600
+     }
+    ]
+   }
+  ],
+  "Notification": [
+   {
+    "hooks": [
+     {
+      "type": "command",
+      "command": "$HOME/harness/harness/hooks/head_hook.py",
+      "timeout": 10
+     }
+    ]
+   }
+  ],
+  "Stop": [
+   {
+    "hooks": [
+     {
+      "type": "command",
+      "command": "$HOME/harness/harness/hooks/head_hook.py",
+      "timeout": 10
+     }
+    ]
+   }
+  ],
+  "StopFailure": [
+   {
+    "hooks": [
+     {
+      "type": "command",
+      "command": "$HOME/harness/harness/hooks/head_hook.py",
+      "timeout": 10
+     }
+    ]
+   }
+  ]
+ },
+ "showThinkingSummaries": true,
+ "permissions": {
+  "additionalDirectories": [
+   "~/heads"
+  ]
+ }
+}

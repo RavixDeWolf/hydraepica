@@ -1,0 +1,9 @@
+*.env
+.env*
+config.toml
+state/
+*.log
+*.jsonl
+__pycache__/
+.pytest_cache/
+.venv/
