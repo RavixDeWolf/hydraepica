@@ -67,6 +67,8 @@ the terminal. The screen is read only for login and trust prompts.
 | `safety/ship_check.py` | The release gate for anything that catches, surfaces or gates. |
 | `deploy/` | systemd user units and an MCP config template. |
 
+See [docs/failure-design.md](docs/failure-design.md) for why each safety piece exists and where it stops.
+
 ## Set up
 
 Linux with systemd user services, Python 3.12, tmux, ffmpeg, and Claude Code installed and logged in.
@@ -88,7 +90,7 @@ keep `/api/push*` reachable from the host only.
 ## Tests
 
 ```bash
-.venv/bin/python -m pytest tests/          # 494 tests; every one runs against a throwaway config and state dir
+.venv/bin/python -m pytest tests/          # 505 tests; every one runs against a throwaway config and state dir
 node tests/test_browser_page.js            # the stage page's logic against the real index.html
 python3 safety/test_ship_check.py          # ship_check's own suite
 ```
