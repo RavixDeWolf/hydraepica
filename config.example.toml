@@ -30,6 +30,9 @@ hub_url = "http://127.0.0.1:9000/mcp"
 [exec.hosts]                       # hub exec tool: ssh aliases the exec tool may reach
 # build = "build-box"
 
+[machines]                         # /ram /vram /storage /load /loadavg <name>: the local machine always works
+# build = { ssh = "build-box", os = "linux" }     # os: linux | mac | windows (ssh alias, key auth)
+
 [[cameras]]                        # hub senses tool: still frames on request
 # name = "desk"
 # kind = "usb"                     # usb | rtsp | http

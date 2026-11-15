@@ -1740,6 +1740,8 @@ def media_to_text(tok, m):
 
 
 COMMANDS = ("/stop", "/new", "/status", "/help", "/thoughts", "/show", "/model", "/usage")
+# Machine stats in any topic: "/ram" = this machine, "/ram build" = one named in [machines] (hostload.py).
+HOSTLOAD = ("/ram", "/vram", "/storage", "/load", "/loadavg")
 # TIK-1087 (2026-10-27 20:55): Rav's "/usage" was typed raw into the REPL; Claude Code opened its interactive usage
 # panel, which waits for a key, and every later message sat behind it for an hour. Slash commands that open a screen
 # are never typed raw: /usage is driven here (open, read, Escape, verify closed); the rest are refused with a reason.
@@ -1896,7 +1898,7 @@ def command_of(text):
     if not text or not text.strip().startswith("/"):
         return None
     c = re.sub(r"[?!.\s]+$", "", text.strip().split()[0]).split("@")[0].lower()
-    return c if c in COMMANDS or c in INTERACTIVE else None
+    return c if c in COMMANDS or c in HOSTLOAD or c in INTERACTIVE else None
 
 
 def command(m, tok, cmd, call=None):
@@ -1910,6 +1912,16 @@ def command(m, tok, cmd, call=None):
         return
     if cmd == "/show":
         show(tok, m)
+        return
+    if cmd in HOSTLOAD:                              # ssh can take seconds: never hold the poll loop
+        def _stats():
+            try:
+                import hostload
+                say(hostload.report(m.get("text") or cmd) or "?")
+            except Exception as e:
+                tgapi._log("head", event2="hostload_error", error=str(e)[:200])
+                say(f"⚠️ {cmd} failed: {type(e).__name__}")
+        threading.Thread(target=_stats, daemon=True).start()
         return
     if cmd in INTERACTIVE:
         say(f"{cmd} opens an interactive screen the head can't drive from Telegram, so I didn't type it (TIK-1087). "
@@ -1944,6 +1956,7 @@ def command(m, tok, cmd, call=None):
             "/show (as a reply to an answer) draw it: diagram, chart or table as a picture\n"
             "/model pick Haiku / Sonnet / Opus / Fable (latest, effort low)\n"
             "/usage Claude usage: session and week, with reset times\n"
+            "/ram /vram /storage /load /loadavg this machine (add a name from [machines] for another)\n"
             "Permission questions come as Allow / Deny buttons.")
 
 
