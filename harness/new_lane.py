@@ -36,6 +36,7 @@ LOG = os.path.join(BASE, "new_lane.log")
 TEMPLATES = os.environ.get("NEW_LANE_TEMPLATES") or os.path.join(os.path.dirname(os.path.abspath(__file__)), "templates")   # owned by the maker, not by any lane
 TEMPLATE = os.path.join(TEMPLATES, "head_settings.json")
 TEMPLATE_LOCAL = os.path.join(TEMPLATES, "head_settings.local.json")
+SKILLS = os.environ.get("NEW_LANE_SKILLS") or os.path.join(os.path.dirname(os.path.abspath(__file__)), "skills")
 CLAUDE_JSON = os.path.join(HOME, ".claude.json")
 RESERVED = {"main", "head", "claude", "base", "inbox", "perm"}
 READY_S, ANSWER_S = 90, 120
@@ -141,6 +142,24 @@ the answer here, replacing this paragraph, with the date and their words, and ke
 """
 
 
+def link_skills(d, src=None):
+    """Symlink every harness skill into <d>/.claude/skills/<name>, so a fix to a skill reaches every head.
+    An existing entry of the same name is left alone (a head may override a skill). -> [names linked]."""
+    src = src or SKILLS
+    dst = os.path.join(d, ".claude", "skills")
+    os.makedirs(dst, exist_ok=True)
+    done = []
+    for name in sorted(os.listdir(src)) if os.path.isdir(src) else []:
+        if not os.path.isfile(os.path.join(src, name, "SKILL.md")):
+            continue
+        link = os.path.join(dst, name)
+        if os.path.lexists(link):
+            continue
+        os.symlink(os.path.join(src, name), link)
+        done.append(name)
+    return done
+
+
 def write_files(lane, title, tid, uid):
     for t in (TEMPLATE, TEMPLATE_LOCAL):
         if not os.path.isfile(t):
@@ -149,6 +168,7 @@ def write_files(lane, title, tid, uid):
     os.makedirs(os.path.join(d, ".claude"), exist_ok=True)
     shutil.copyfile(TEMPLATE, os.path.join(d, ".claude", "settings.json"))
     shutil.copyfile(TEMPLATE_LOCAL, os.path.join(d, ".claude", "settings.local.json"))
+    link_skills(d)
     with open(os.path.join(d, "CLAUDE.md"), "w") as f:
         f.write(CLAUDE_MD.format(agent=config.AGENT_NAME, title=title.replace('"', "'"), thread=tid, lane=lane,
                                  date=time.strftime("%Y-%m-%d"), main_md=os.path.join(lane_dir("main"), "CLAUDE.md"),

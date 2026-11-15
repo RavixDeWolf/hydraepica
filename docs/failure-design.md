@@ -84,7 +84,7 @@ behind a green "worked on attempt 3" counts as the bug.
 
 ## 5. Tests that can't hurt the live system
 
-All 505 tests run against a throwaway config and state directory. The router suite refuses, at the socket level, to
+All 516 tests run against a throwaway config and state directory. The router suite refuses, at the socket level, to
 connect to a live head. That rule exists because a test once did.
 
 ## What's still open

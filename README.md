@@ -60,6 +60,7 @@ the terminal. The screen is read only for login and trust prompts.
 | `harness/jrelay.py` | `/j` to any product bot reaches that product's own head; the answer comes back in that chat. |
 | `harness/tg/` | Telegram as a tool for the heads (context, search, forward, pin, buttons, progress), and `handoff.py`. |
 | `harness/stage/` | The Mini App stage: cards, images, video, sandboxed HTML, galleries, live camera + push-to-talk, casting. |
+| `harness/skills/` | Skills each head gets (linked in by `new_lane.py`): stage, telegram, handoff, self-edit, ship-a-gate. |
 | `harness/render/` | Diagrams, pages and markdown to PNG; voice notes; video contact sheets. |
 | `harness/llm.py` | Quick replies outside any head: local OpenAI-compatible endpoint first, hosted router as fallback. |
 | `hub/` | Example MCP server: `tickets`, `exec`, `senses`, with a per-head audit log. |
@@ -79,6 +80,8 @@ python3 -m venv .venv && .venv/bin/pip install -r requirements.txt
 mkdir -p ~/.config/harness && cp config.example.toml ~/.config/harness/config.toml   # edit: your Telegram id, names
 echo 'HARNESS_BOT_TOKEN=<token from @BotFather>' > ~/.config/harness/secrets.env && chmod 600 ~/.config/harness/secrets.env
 mkdir -p ~/heads/main/.claude && cp harness/templates/head_settings.json ~/heads/main/.claude/settings.json
+sed 's/{agent}/Atlas/' harness/templates/head_instructions.md > ~/heads/main/CLAUDE.md   # your agent's name
+python3 -c 'import sys; sys.path.insert(0, "harness"); import new_lane; new_lane.link_skills(sys.argv[1])' ~/heads/main
 cp deploy/*.service ~/.config/systemd/user/ && systemctl --user daemon-reload
 systemctl --user enable --now harness-gateway harness-stage harness-head@main
 ```
@@ -90,7 +93,7 @@ keep `/api/push*` reachable from the host only.
 ## Tests
 
 ```bash
-.venv/bin/python -m pytest tests/          # 505 tests; every one runs against a throwaway config and state dir
+.venv/bin/python -m pytest tests/          # 516 tests; every one runs against a throwaway config and state dir
 node tests/test_browser_page.js            # the stage page's logic against the real index.html
 python3 safety/test_ship_check.py          # ship_check's own suite
 ```

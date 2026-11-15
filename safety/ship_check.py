@@ -27,7 +27,7 @@ under test while this runs.
 USAGE
   ship_check.py MANIFEST.json [--only a,b] [--skip a,b]
   ship_check.py recover FILE
-Exit 0 only when every selected check passes. See SKILL_ship_a_watcher.md for the manifest schema.
+Exit 0 only when every selected check passes. See harness/skills/ship-a-gate/SKILL.md for the manifest schema.
 """
 from __future__ import annotations
 import calendar, datetime, hashlib, json, os, re, runpy, shlex, shutil, signal, subprocess, sys, time

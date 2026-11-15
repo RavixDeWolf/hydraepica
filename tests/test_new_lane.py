@@ -230,6 +230,9 @@ class CreateTest(unittest.TestCase):
         self.assertEqual(open(os.path.join(d, ".claude", "settings.json")).read(), '{"hooks": {"Stop": []}}')
         self.assertEqual(open(os.path.join(d, ".claude", "settings.local.json")).read(), '{"permissions": {"allow": []}}')
         self.assertIn('"Garden"', open(os.path.join(d, "CLAUDE.md")).read())
+        sk = os.path.join(d, ".claude", "skills")          # every harness skill is linked into the new head
+        self.assertEqual(sorted(os.listdir(sk)), sorted(os.listdir(nl.SKILLS)))
+        self.assertTrue(all(os.path.islink(os.path.join(sk, n)) for n in os.listdir(sk)))
         self.assertIn(os.path.join(home, "heads", "main", "CLAUDE.md"), open(os.path.join(d, "CLAUDE.md")).read())
         self.assertEqual(json.load(open(os.path.join(nl.BASE, "garden", "tg_threads.json"))), {"111111111": 777001})
         cj = json.load(open(os.path.join(home, ".claude.json")))
