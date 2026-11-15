@@ -12,6 +12,7 @@ so Claude Code shows its normal prompt in the terminal. Everything is logged.
 import json
 import os
 import sys
+sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))   # hooks/ (leakcheck)
 import time
 import uuid
 
@@ -160,6 +161,31 @@ def watch_background(d, spawn=None):
 
 def handle(d, out=sys.stdout):
     ev = d.get("hook_event_name")
+    if ev == "PreToolUse":
+        try:                                       # demo-safe lanes: step labels + mid-turn sends
+            import leakcheck
+            if leakcheck.enabled(D):
+                probs = leakcheck.scan_tool(d.get("tool_name") or "", d.get("tool_input"))
+                if probs:
+                    append({"event": "leakcheck", "held": True, "tool": d.get("tool_name"), "problems": probs[:8]})
+                    leakcheck.log(D, probs)
+                    out.write(json.dumps({"hookSpecificOutput": {"hookEventName": "PreToolUse",
+                              "permissionDecision": "deny", "permissionDecisionReason": leakcheck.tool_reason(probs)}}))
+                    return
+        except Exception as e:
+            append({"event": "leakcheck_error", "error": str(e)[:200]})
+    if ev == "Stop":
+        try:                                       # demo-safe lanes never send IPs/paths/keys, text or image
+            import leakcheck
+            if leakcheck.enabled(D):
+                probs = leakcheck.scan_reply(d.get("last_assistant_message") or "")
+                append({"event": "leakcheck", "held": bool(probs), "problems": probs[:8]})
+                leakcheck.log(D, probs)
+                if probs:                          # held, NOT logged as Stop, so the lane keeps waiting for the fix
+                    out.write(json.dumps({"decision": "block", "reason": leakcheck.reason(probs)}))
+                    return
+        except Exception as e:                     # a broken check must not let a leak out silently: log loudly
+            append({"event": "leakcheck_error", "error": str(e)[:200]})
     if ev != "PermissionRequest" or not remote_active():
         append({"event": ev, "data": d})
         if ev == "PostToolUse":

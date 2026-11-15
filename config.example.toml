@@ -33,6 +33,13 @@ hub_url = "http://127.0.0.1:9000/mcp"
 [machines]                         # /ram /vram /storage /load /loadavg <name>: the local machine always works
 # build = { ssh = "build-box", os = "linux" }     # os: linux | mac | windows (ssh alias, key auth)
 
+# Optional: demo-safe lanes (touch <state dir>/demo_safe in a lane you film). IPs, internal paths, keys, local
+# ports and this machine's account name are always flagged there; add your own names here (needs tesseract for images).
+# [leakcheck]
+# aliases = { "build-box" = "Builder" }   # real machine name -> what the demo thread says instead
+# words = ["Project Falcon"]
+# domains = ["corp.example"]              # any subdomain of these is flagged
+
 [[cameras]]                        # hub senses tool: still frames on request
 # name = "desk"
 # kind = "usb"                     # usb | rtsp | http
