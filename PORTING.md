@@ -18,9 +18,4 @@ Lab features that are not in the public core yet. Each one is tagged `hydra:core
 | A head about to start the wrong Claude Code says so in its topic | hydra:core | `harness/cli_check.py`, ExecStartPre in the head unit |
 | Vault: encrypted secrets, `vault:NAME` in the config, write-only add/replace from the stage's Settings | hydra:core | `harness/vault.py`, `/api/vault*` |
 | Mail tab: bring-your-own IMAP/SMTP, password from the vault | hydra:plugin | `harness/stage/mail.py`, `/api/mail*` (a new build; the lab's tab frames its own mail service) |
-
-## Queued
-
-| Feature | Tag | Notes |
-|---|---|---|
-| Hold a done/can't reply until the head has looked | hydra:plugin | off by default |
+| Hold a done / can't reply once until the head has looked | hydra:plugin | `harness/hooks/recheck.py`, off by default |

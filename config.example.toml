@@ -24,6 +24,8 @@ name = "sam"
 
 [head]
 cli = "~/.local/bin/claude"        # the Claude Code each head must start; anything else is said in its topic
+# recheck = true                     # optional: hold a "done" with nothing checked after the last change, or a
+#                                    # "can't" with nothing searched, once per turn (or touch <state>/recheck_on per head)
 
 [paths]
 state_dir = "~/.local/state/harness"

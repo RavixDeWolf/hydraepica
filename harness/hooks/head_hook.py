@@ -186,6 +186,20 @@ def handle(d, out=sys.stdout):
                     return
         except Exception as e:                     # a broken check must not let a leak out silently: log loudly
             append({"event": "leakcheck_error", "error": str(e)[:200]})
+    if ev == "Stop":
+        try:                                       # optional: hold a done/can't reply once until the head has looked
+            import recheck
+            if recheck.enabled(D):
+                tools = recheck.turn_tools(d.get("transcript_path") or "")
+                why = recheck.decide(d, tools)
+                recheck.log(D, {"held": bool(why), "again": bool(d.get("stop_hook_active")),
+                                "tools": len(tools or []), "reply": (d.get("last_assistant_message") or "")[:200]})
+                if why:                            # logged as StopHeld, NOT Stop, so the lane keeps waiting
+                    append({"event": "StopHeld", "reason": why[:120]})
+                    out.write(json.dumps({"decision": "block", "reason": why}))
+                    return
+        except Exception as e:                     # never break the head for a re-check; log it
+            append({"event": "recheck_error", "error": str(e)[:200]})
     if ev != "PermissionRequest" or not remote_active():
         append({"event": ev, "data": d})
         if ev == "PostToolUse":
