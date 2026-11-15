@@ -4,7 +4,7 @@
 name = "Atlas"                     # what the heads call themselves
 
 [telegram]
-bot_token_env = "HARNESS_BOT_TOKEN"   # the token lives in this env var, not in this file
+bot_token_env = "HARNESS_BOT_TOKEN"   # the token lives in this env var, not in this file ("vault:NAME" works too)
 owner_id = 111111111               # your Telegram user id
 # chat_id defaults to owner_id (the bot's private chat with you, with topics enabled)
 
@@ -16,6 +16,11 @@ admin = true
 [[users]]
 id = 222222222
 name = "sam"
+
+# Optional: where the encrypted vault lives (vault.py; "vault:NAME" anywhere the config names a secret's env var).
+# [vault]
+# key_file = "~/.config/harness/vault.key"   # made on first use, mode 600; keep it apart from the vault file
+# path = "~/.local/state/harness/vault/vault.enc"
 
 [head]
 cli = "~/.local/bin/claude"        # the Claude Code each head must start; anything else is said in its topic

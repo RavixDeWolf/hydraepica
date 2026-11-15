@@ -28,11 +28,16 @@ Say what you found, how to reproduce it, and what it lets someone do. You will g
   access you mean them to have.
 - **The hub over HTTP** (`--http`) binds 127.0.0.1 and refuses to start without `HUB_TOKEN` (32+ chars); every
   request must send it as a bearer token. stdio mode needs none: Claude Code starts it per head.
-- **Secrets:** the bot token, API keys and screen keys live in environment variables or files outside the repo.
+- **Secrets:** the bot token, API keys and screen keys live in environment variables, files outside the repo, or
+  the encrypted vault (`harness/vault.py`, referenced as `vault:NAME`). From the phone the vault is write-only: an
+  admin with a sign-in less than 15 minutes old can add or replace a secret and see names and fingerprints, never a
+  value. Every phone write is said in Telegram; a replaced value is kept for rollback.
   `tools/scan.py` refuses a commit that carries a token, a key, a private address or a home path.
 
 ## Known limits
 
 - The heads run as an ordinary Unix user. `headsafe`'s "the safety net is off limits" is a rule plus a deny list,
   not a lock, unless you make its code and store owned by another user.
+- The vault's key is a file your user can read, so the vault protects secrets at rest and keeps them out of configs,
+  logs and chats; it does not protect them from your own account. Keep the key apart, or owned by another user.
 - `exec` classification is a pattern list. Treat it as defence in depth, not a boundary.

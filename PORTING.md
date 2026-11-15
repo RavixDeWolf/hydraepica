@@ -17,10 +17,10 @@ Lab features that are not in the public core yet. Each one is tagged `hydra:core
 | Demo-safe leak check (reply text, OCR of images, step labels, mid-turn sends) | hydra:core | `harness/hooks/leakcheck.py`, names in `[leakcheck]` |
 | Stage html pages report errors and blank canvases (with a snapshot) to the head that posted them | hydra:core | `harness/stage/stage_report.py` |
 | A head about to start the wrong Claude Code says so in its topic | hydra:core | `harness/cli_check.py`, ExecStartPre in the head unit |
+| Vault: encrypted secrets, `vault:NAME` in the config, write-only add/replace from the stage's Settings | hydra:core | `harness/vault.py`, `/api/vault*` |
 
 ## Queued
 
 | Feature | Tag | Notes |
 |---|---|---|
 | Hold a done/can't reply until the head has looked | hydra:plugin | off by default |
-| Vault + write-only inject from the stage's Settings | hydra:core | encrypted store, fingerprints only |

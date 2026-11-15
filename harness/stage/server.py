@@ -528,6 +528,72 @@ async def push(person: str, request: Request):
     return {"ok": True, "id": item["id"]}
 
 
+# ---- Vault, write-only from the phone. Fresh Telegram sign-in (the app opened in the last 15 min, in the header,
+# never a URL ticket) from an admin may ADD or REPLACE a secret and list names + fingerprints. Reading and deleting
+# stay on the host (vault.py). The value is never logged or echoed; every write is said in Telegram.
+VAULT_FRESH_S = 900
+
+
+def vault_admin(request: Request, token=None, now=None):
+    raw = request.headers.get("x-init-data", "")
+    try:
+        user = tg_webapp_auth.verify(raw, token if token is not None else bot_token(),
+                                     allowed_ids=SETTINGS_ADMINS, max_age=VAULT_FRESH_S, now=now)
+    except tg_webapp_auth.AuthError as e:
+        if e.status == 401 and raw:
+            raise HTTPException(401, "sign-in too old or invalid for the vault: close and reopen the app")
+        raise HTTPException(e.status, e.detail)
+    return int(user["id"])
+
+
+def _vault_note(text):
+    import subprocess
+    try:
+        r = subprocess.run([sys.executable, str(Path(__file__).resolve().parent.parent / "tg" / "tg.py"), "send", text],
+                           timeout=20, capture_output=True)
+        if r.returncode:
+            print(f"[vault] telegram note FAILED: exit {r.returncode}", flush=True)
+    except Exception as e:
+        print(f"[vault] telegram note FAILED: {type(e).__name__}", flush=True)
+
+
+@app.get("/api/vault")
+def vault_list(request: Request):
+    vault_admin(request)
+    import vault
+    try:
+        return {"entries": vault.Vault().list()}
+    except vault.VaultError as e:
+        raise HTTPException(500, str(e))
+
+
+@app.post("/api/vault/set")
+async def vault_set(request: Request):
+    uid = vault_admin(request)
+    try:
+        body = await request.json()
+    except Exception:
+        raise HTTPException(400, "bad body")
+    return await asyncio.to_thread(_vault_write, uid, str(body.get("name") or ""), str(body.get("value") or ""),
+                                   bool(body.get("replace")))
+
+
+def _vault_write(uid, name, value, replace):
+    import vault
+    try:
+        out = vault.Vault().set(name, value, replace=replace)
+    except vault.Exists as e:
+        raise HTTPException(409, str(e))
+    except vault.VaultError as e:
+        raise HTTPException(400, str(e))
+    if not out["unchanged"]:
+        who = config.USERS.get(uid, str(uid))
+        print(f"[vault] set {out['name']} {out['fingerprint']} replaced={out['replaced']} by {who} via stage", flush=True)
+        _vault_note(f"🔐 Vault: {out['name']} {'replaced' if out['replaced'] else 'added'} from the app by {who} "
+                    f"({out['fingerprint']})." + (" Old value kept for rollback." if out["replaced"] else ""))
+    return {"ok": True, **out}
+
+
 @app.post("/api/stage-report")
 async def stage_report_api(request: Request):
     """A stage html page's errors, sent by the app page, handed to the head that published it."""

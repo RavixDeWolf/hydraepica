@@ -65,7 +65,7 @@ def screen_key(name):
     s = screens().get(name) or {}
     if s.get("kind") != "receiver":
         return ""
-    k = os.environ.get(s.get("key_env") or "", "")
+    k = config.secret(s.get("key_env")) or ""
     if k and len(k) < MIN_KEY_LEN:
         print(f"cast: screen {name!r} key in ${s.get('key_env')} is {len(k)} chars, need {MIN_KEY_LEN}+; screen disabled",
               file=sys.stderr)

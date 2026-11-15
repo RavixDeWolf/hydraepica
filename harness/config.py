@@ -35,10 +35,21 @@ HUB_URL = _C.get("mcp", {}).get("hub_url", "")
 def bot_token():
     """The bot token, from the env var the config names. Never logged, never written."""
     var = _tg.get("bot_token_env", "HARNESS_BOT_TOKEN")
-    tok = os.environ.get(var)
+    tok = secret(var)
     if not tok:
-        raise RuntimeError(f"bot token missing: set ${var}")
+        raise RuntimeError(f"bot token missing: set ${var}" if not var.startswith("vault:") else f"bot token missing: {var}")
     return tok
+
+
+def secret(spec):
+    """A secret the config names: "vault:NAME" (encrypted vault, vault.py) or an environment variable name."""
+    if spec and str(spec).startswith("vault:"):
+        import vault
+        try:
+            return vault.Vault().get(spec[6:])
+        except vault.VaultError:
+            return None
+    return os.environ.get(spec) if spec else None
 
 
 def section(name):

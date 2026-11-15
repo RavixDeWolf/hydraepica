@@ -57,6 +57,7 @@ the terminal. The screen is read only for login and trust prompts.
 | `harness/head_bridge.py` | Types prompts into a Claude Code REPL in tmux; one tmux server per head. |
 | `harness/hooks/head_hook.py` | Claude Code hook: every event to `events.jsonl`; permission requests wait for your tap. |
 | `harness/hooks/leakcheck.py` | Demo-safe lanes: a reply or step that would show an IP, a path, a key or a name you list is held, images OCR'd. |
+| `harness/vault.py` | Encrypted secrets: `set` / `list` (fingerprints) / `run --env`; `vault:NAME` in the config; a write-only form in the stage's Settings. |
 | `harness/hostload.py` | `/ram /vram /storage /load /loadavg` for this machine or any in `[machines]` (Linux, Mac, Windows). |
 | `harness/new_lane.py` | Make a new Telegram topic and it gets its own head: folder, settings, unit, first-run dialogs. |
 | `harness/jrelay.py` | `/j` to any product bot reaches that product's own head; the answer comes back in that chat. |
@@ -95,7 +96,7 @@ keep `/api/push*` reachable from the host only.
 ## Tests
 
 ```bash
-.venv/bin/python -m pytest tests/          # 570 tests; every one runs against a throwaway config and state dir
+.venv/bin/python -m pytest tests/          # 580 tests; every one runs against a throwaway config and state dir
 node tests/test_browser_page.js            # the stage page's logic against the real index.html
 python3 safety/test_ship_check.py          # ship_check's own suite
 ```

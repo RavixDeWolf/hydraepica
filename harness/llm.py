@@ -30,7 +30,7 @@ def endpoints():
 def _call(ep, messages, opener=None):
     headers = {"Content-Type": "application/json"}
     if ep.get("key_env"):
-        key = os.environ.get(ep["key_env"])
+        key = config.secret(ep["key_env"])
         if not key:
             raise RuntimeError(f"${ep['key_env']} is not set")
         headers["Authorization"] = f"Bearer {key}"
