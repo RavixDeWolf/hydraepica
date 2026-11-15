@@ -17,6 +17,9 @@ admin = true
 id = 222222222
 name = "sam"
 
+[head]
+cli = "~/.local/bin/claude"        # the Claude Code each head must start; anything else is said in its topic
+
 [paths]
 state_dir = "~/.local/state/harness"
 work_root = "~/heads"
