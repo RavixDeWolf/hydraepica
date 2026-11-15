@@ -77,7 +77,8 @@ def item_from(args):
         src = f"data:{mt};base64," + base64.b64encode(open(args.a, "rb").read()).decode()
         return {"kind": "video", "src": src, "caption": args.caption, "title": args.title}
     if args.kind == "html":
-        return {"kind": "html", "html": open(args.a, encoding="utf-8").read(), "title": args.title}
+        return {"kind": "html", "html": open(args.a, encoding="utf-8").read(), "title": args.title,
+                "lane": os.environ.get("HEAD_LANE") or "main"}     # its errors come back to this head
     if args.kind == "url":
         return {"kind": "url", "url": args.a, "title": args.title}
     raise SystemExit(f"unknown kind {args.kind}")

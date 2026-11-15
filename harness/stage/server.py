@@ -184,6 +184,11 @@ def validate(item):
         if not all(isinstance(i, dict) and str(i.get("src", "")).startswith("data:image/") for i in ims):
             raise HTTPException(400, "every gallery image src must be a data:image/ URI")
     clean = {k: item[k] for k in ("kind", "title", "body", "src", "html", "url", "caption") if k in item}
+    if kind == "html" and isinstance(item.get("lane"), str) and re.match(r"^[a-z0-9][a-z0-9-]{0,39}$", item["lane"]):
+        clean["lane"] = item["lane"]                # the head that published it hears its errors
+    if kind == "html":
+        import stage_report
+        clean["html"] = stage_report.inject(str(clean.get("html") or ""))
     if kind == "gallery":
         clean["images"] = [{"src": i["src"], "caption": str(i.get("caption") or "")[:200],
                             "intent": str(i.get("intent") or "")[:2000],
@@ -521,6 +526,20 @@ async def push(person: str, request: Request):
     item = add_item(person, await request.json())
     _notify(person, {"type": "state"})
     return {"ok": True, "id": item["id"]}
+
+
+@app.post("/api/stage-report")
+async def stage_report_api(request: Request):
+    """A stage html page's errors, sent by the app page, handed to the head that published it."""
+    person, _ = person_for(request)
+    body = await request.json()
+    import stage_report
+    with _lock:
+        st = load(person)
+        it = next((i for lst in LISTS for i in st[lst] if i["id"] == str(body.get("id"))), None)
+    if not it or it.get("kind") != "html":
+        raise HTTPException(404, "no such html stage")
+    return stage_report.report(person, it, body)
 
 
 @app.post("/api/clear")

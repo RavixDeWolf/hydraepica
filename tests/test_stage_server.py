@@ -172,7 +172,7 @@ class Stage(unittest.TestCase):
         self.assertNotIn("html", v["history"][1])
         self.assertEqual(v["live"]["body"], "B")
         full = c.get(f"/api/item/history/{v['history'][1]['id']}", headers=H(OWNER)).json()
-        self.assertEqual(full["html"], "<b>x</b>")
+        self.assertTrue(full["html"].endswith("<b>x</b>") and "hydraStage" in full["html"])   # error reporter injected
         self.assertEqual(c.get(f"/api/item/history/{v['history'][1]['id']}", headers=H(USER_B)).status_code, 404)
 
     def test_show_from_history_sets_live(self):

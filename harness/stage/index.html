@@ -356,10 +356,20 @@ function render(it) {
     el.classList.add("html-item");
     const f = document.createElement("iframe");
     f.setAttribute("sandbox", "allow-scripts"); f.srcdoc = it.html || "";
+    f.dataset.stageId = it.id;              // its reporter's errors go back to the head that made it
     el.insertBefore(f, el.querySelector(".when"));
   }
   return el;
 }
+
+// A stage page's reporter (injected by the server) posts its errors here; only from our own stage iframes.
+window.addEventListener("message", e => {
+  if (!e.data || e.data.hydraStage !== 1) return;
+  const f = [...document.querySelectorAll("iframe[data-stage-id]")].find(x => x.contentWindow === e.source);
+  if (!f) return;
+  api("/api/stage-report", { method: "POST", headers: Object.assign({ "Content-Type": "application/json" }, H),
+      body: JSON.stringify({ id: f.dataset.stageId, problems: e.data.problems, snap: e.data.snap }) }).catch(() => {});
+});
 
 // ---- state: live / history / saved / inbox / archive (lists are metadata; full items load on open) ----
 let st = { live: null, history: [], saved: [], inbox: [], archive: [] };
