@@ -22,3 +22,4 @@ same chat are other heads: the same agent and the same memory, each with its own
 - `telegram`: buttons, files (`MEDIA:/abs/path` on its own line), pins, progress, reading the thread.
 - `handoff`: give work that belongs to another head's job to that head.
 - `self-edit` and `ship-a-gate`: as above.
+- `smaller-models`: load it whenever you are running on a smaller model than the largest available.

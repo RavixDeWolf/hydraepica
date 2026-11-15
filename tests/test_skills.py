@@ -33,7 +33,7 @@ PRIVATE = "|".join(r"\b" + w[::-1] + r"\b" for w in ("var", "moclaialt", "tluav"
 
 class WellFormed(unittest.TestCase):
     def test_the_five_are_there(self):
-        self.assertEqual(set(skills()), {"stage", "telegram", "handoff", "self-edit", "ship-a-gate"})
+        self.assertEqual(set(skills()), {"stage", "telegram", "handoff", "self-edit", "ship-a-gate", "smaller-models"})
 
     def test_frontmatter_name_matches_folder_and_has_a_description(self):
         for name, text in skills().items():
@@ -97,7 +97,7 @@ class Linking(unittest.TestCase):
             own = os.path.join(d, ".claude", "skills", "stage")
             os.makedirs(own)
             done = new_lane.link_skills(d, SKILLS)
-            self.assertEqual(set(done), {"telegram", "handoff", "self-edit", "ship-a-gate"})
+            self.assertEqual(set(done), {"telegram", "handoff", "self-edit", "ship-a-gate", "smaller-models"})
             self.assertFalse(os.path.islink(own))          # a head's own override is left alone
             for n in done:
                 self.assertTrue(os.path.isfile(os.path.join(d, ".claude", "skills", n, "SKILL.md")))

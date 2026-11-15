@@ -60,7 +60,7 @@ the terminal. The screen is read only for login and trust prompts.
 | `harness/jrelay.py` | `/j` to any product bot reaches that product's own head; the answer comes back in that chat. |
 | `harness/tg/` | Telegram as a tool for the heads (context, search, forward, pin, buttons, progress), and `handoff.py`. |
 | `harness/stage/` | The Mini App stage: cards, images, video, sandboxed HTML, galleries, live camera + push-to-talk, casting. |
-| `harness/skills/` | Skills each head gets (linked in by `new_lane.py`): stage, telegram, handoff, self-edit, ship-a-gate. |
+| `harness/skills/` | Skills each head gets (linked in by `new_lane.py`): stage, telegram, handoff, self-edit, ship-a-gate, smaller-models. |
 | `harness/render/` | Diagrams, pages and markdown to PNG; voice notes; video contact sheets. |
 | `harness/llm.py` | Quick replies outside any head: local OpenAI-compatible endpoint first, hosted router as fallback. |
 | `hub/` | Example MCP server: `tickets`, `exec`, `senses`, with a per-head audit log. |
