@@ -49,7 +49,13 @@ PERM_DIR = os.path.join(STATE_DIR, "perm")
 INBOX = os.path.join(STATE_DIR, "inbox")
 # GPU the STT server first; the GPU broker stops it for image jobs on purpose, then the CPU copy on :8003 answers.
 STT_URLS = config.STT_URLS
-TURN_TIMEOUT_S = 30 * 60
+TURN_TIMEOUT_S = 30 * 60        # the SILENCE limit (no hook event and the screen not busy), not wall time
+TURN_HARD_CAP_S = 4 * 60 * 60   # a working turn is followed (and its reply delivered) up to this long
+STILL_FIRST_S = 10 * 60         # first "still working" line after this long with no reply
+STILL_EVERY_S = 15 * 60         # ...then at most this often (never a stream)
+COMPACT_GAP_S = 5 * 60          # at most one "context was summarised" line per this many seconds
+SEND_RETRY_WAIT_S = 5           # a final reply Telegram refused is resent once after this wait
+RATE_LIMIT_WAIT_S = 30          # a turn that died on the API's rate_limit is retried once after this wait
 POLL_S = 3
 TG_LIMIT = 3900
 
@@ -778,6 +784,8 @@ def on_button(cq, data, tok, call=None):
         return on_model_button(cq, data, tok, answer, call=call)
     if data.startswith("hd:u:"):
         return on_choice_button(cq, data, tok, answer)
+    if data.startswith("hd:r:"):
+        return on_retry_button(cq, data, tok, answer)
     if uid not in HEAD_UIDS or key not in ("1", "2", "3", "4", "Escape"):
         tgapi._log("head_refused_button", uid=uid, data=data[:20])
         answer("Not yours."); return
@@ -856,22 +864,59 @@ def gate_of(resp):
     return None
 
 
-def follow(off, io, call=bridge, read=read_events, sleep=time.sleep, now=time.time, timeout=TURN_TIMEOUT_S):
+def _tell(io, text, kind):
+    """one progress line in the turn's thread. Logged; a failed send is logged, never raised."""
+    tgapi._log("head", event2="progress_note", kind=kind, lane=_LANE)
+    try:
+        io.say(text)
+    except Exception as e:
+        tgapi._log("head", event2="progress_note_fail", kind=kind, lane=_LANE, error=str(e)[:150])
+
+
+def _on_what(io):
+    tools = getattr(io, "tools", None) or []
+    return f" Last step: {tools[-1]}" if tools else ""
+
+
+def follow(off, io, call=bridge, read=read_events, sleep=time.sleep, now=time.time, timeout=TURN_TIMEOUT_S,
+           hard_cap=TURN_HARD_CAP_S):
     """Follow the head's hook events from byte offset off until the turn ends.
 
-    -> (outcome, payload, off): ('done', reply_text) | ('failed', why) | ('tui_prompt', None) | ('timeout', None).
+    -> (outcome, payload, off): ('done', reply_text) | ('failed', why) | ('tui_prompt', None) | ('timeout', why).
     PreToolUse -> status bubble; PermissionRequest (parked by the hook) -> Allow/Deny card; Stop -> the reply.
-    The pane is only checked for a dead/login gate and for a terminal prompt nobody parked (the fallback)."""
+    The pane is only checked for a dead/login gate and for a terminal prompt nobody parked (the fallback).
+    the turn is given up only after `timeout` of SILENCE (no hook event, screen not busy) or at `hard_cap`;
+    until then a long turn's reply is still delivered as the answer. Past STILL_FIRST_S one "still working" line, then
+    at most every STILL_EVERY_S; a mid-turn compaction (SessionStart source=compact) gets one line too."""
     t0 = last_pane = now()
     pending = set()
     answered_at, tui_seen = -1e9, 0      # a just-answered prompt can linger on screen: 10 s grace, 2 sightings
-    last_event = now()
-    while now() - t0 < timeout:
+    last_event = last_busy = now()
+    last_still, last_compact = None, -1e9
+    while True:
+        if now() - t0 >= hard_cap:
+            return "timeout", f"still running after {int(hard_cap // 3600)} h", off
+        if now() - max(last_event, last_busy) >= timeout:
+            return "timeout", f"no sign of work for {int(timeout // 60)} min", off
         recs, off = read(off)
         if recs:
             last_event = now()
         for r in recs:
             ev, d = r.get("event"), r.get("data") or {}
+            if ev == "SessionStart" and d.get("source") == "compact":
+                if now() - last_compact >= COMPACT_GAP_S:
+                    last_compact = now()
+                    _tell(io, "⏳ Still working: my context was just summarised, picking the job back up." + _on_what(io),
+                          "compact")
+                continue
+            if ev == "PermissionDenied":                   # auto mode refused a call: say it, it was silent before
+                ti = d.get("tool_input") or {}
+                what = str(ti.get("command") or ti.get("file_path") or json.dumps(ti))[:300]
+                why = str(d.get("reason") or "").strip()[:200]
+                _tell(io, f"🚫 Claude Code's auto-mode check refused a {d.get('tool_name', '?')} call"
+                      + (f" ({why})" if why else "") + f":\n{what}\nNo button can overrule it. To allow it, add an "
+                      "allow or ask rule in the head's settings.", "denied")
+                continue
             if ev == "UserPromptSubmit" and d.get("transcript_path"):
                 io.span = {"path": d["transcript_path"], "start": r.get("tsize", 0)}
             if ev == "PreToolUse":
@@ -893,10 +938,16 @@ def follow(off, io, call=bridge, read=read_events, sleep=time.sleep, now=time.ti
                 return "stopped", None, off
             elif ev == "StopFailure":
                 return "failed", str(d.get("error") or d.get("reason") or "the head stopped with an error")[:300], off
+        el = now() - t0
+        if el >= STILL_FIRST_S and (last_still is None or now() - last_still >= STILL_EVERY_S):
+            last_still = now()
+            _tell(io, f"⏳ Still working, {int(el // 60)} min in." + _on_what(io), "still_working")
         if now() - last_pane >= 5:
             last_pane = now()
             resp = call({"t": "status"}) or {}
             st, gate = resp.get("state"), gate_of(resp)
+            if st == "busy":
+                last_busy = now()
             if gate == "dead" or (gate and now() - last_event > GATE_QUIET_S):
                 return "failed", f"the head isn't ready (state: {gate})", off
             tui_seen = tui_seen + 1 if (st == "permission_prompt" and not pending
@@ -904,7 +955,6 @@ def follow(off, io, call=bridge, read=read_events, sleep=time.sleep, now=time.ti
             if tui_seen >= 2:
                 return "tui_prompt", None, off
         sleep(1)
-    return "timeout", None, off
 
 
 class _IO:
@@ -1014,7 +1064,14 @@ class _IO:
                 ids.append(r["result"]["message_id"])
             except Exception as e:                 # bad HTML must never lose the reply: send it plain, logged
                 tgapi._log("head", event2="html_fallback", error=str(e)[:150])
-                tgapi._reply(self.tok, self.m, part)
+                try:                               # plain send checked here (tgapi._reply swallows)
+                    r = tgapi._api(self.tok, "sendMessage", **self._kw(text=part, disable_web_page_preview=True))
+                    mid = ((r or {}).get("result") or {}).get("message_id")
+                    if mid:
+                        ids.append(mid)
+                except Exception as e2:
+                    tgapi._log("head", event2="part_lost", error=str(e2)[:150])
+                    self.lost = getattr(self, "lost", []) + [part]
         return ids
 
     def remember(self, ids):
@@ -1494,7 +1551,7 @@ def _turn_run(tok, m, text, call=bridge, io=None, read=read_events, sleep=time.s
         body, files = media_lines(payload)
         body, said = voice_block(body)
         if body or not files:
-            io.remember(io.answer(body or "(no text reply)"))
+            io.remember(deliver(io, body or "(no text reply)", sleep=sleep))
         for p in files:
             io.send_file(p)
         if m.get("_from_voice"):                     # TIK-1019 B: voice in -> voice out, with its exact text
@@ -1510,23 +1567,121 @@ def _turn_run(tok, m, text, call=bridge, io=None, read=read_events, sleep=time.s
         io.react("done")
     elif outcome == "failed":
         note_undelivered(why=f"the lane gave up: {payload}")
-        io.say(f"⚠️ {payload}")
+        if retryable(payload):
+            retry_or_offer(io, m, payload, now=now, tok=tok, sleep=sleep)
+        else:
+            io.say(f"⚠️ {payload}")
         io.react("failed")
     else:
-        note_undelivered(why="no reply within 30 min")
+        why = payload or "no reply"
+        note_undelivered(why=f"lane stopped waiting: {why}")
         try:                                      # TIK-1087: say what is on the screen, not "may still be working"
             tl = [l.strip() for l in ((bridge({"t": "tail", "lines": 12}) or {}).get("lines") or []) if l.strip()]
         except Exception as e:
             tl = [f"(screen unreadable: {type(e).__name__})"]
-        io.say("⚠️ No reply after 30 min. The head may still be working; /status shows what it's doing."
+        io.say(f"⚠️ No reply yet ({why}). A reply that comes later is still sent here as a follow-up; "
+               "/status shows what it's doing."
                + ("\nIts screen ends with:\n" + "\n".join(l[:120] for l in tl[-4:]) if tl else ""))
         io.react("failed")
     clear_inflight()
 
 
+def deliver(io, md, sleep=time.sleep):
+    """send the final reply; parts Telegram refused (io.lost) are resent ONCE after SEND_RETRY_WAIT_S. If they
+    still fail, the owner is told in the thread at once and the head hears it next prompt. Every retry and give-up is logged."""
+    io.lost = []
+    ids = list(io.answer(md) or [])
+    lost = list(getattr(io, "lost", None) or [])
+    if not lost:
+        return ids
+    tgapi._log("head", event2="send_retry", lane=_LANE, parts=len(lost), wait_s=SEND_RETRY_WAIT_S)
+    sleep(SEND_RETRY_WAIT_S)
+    io.lost = []
+    for part in lost:
+        ids += list(io.answer(part) or [])
+    still = list(getattr(io, "lost", None) or [])
+    if not still:
+        tgapi._log("head", event2="send_retry_ok", lane=_LANE, parts=len(lost))
+        return ids
+    tgapi._log("head", event2="send_give_up", lane=_LANE, parts=len(still))
+    note_undelivered(why=f"Telegram refused {len(still)} part(s) of the reply, retried once")
+    io.say(f"⚠️ My last reply didn't send ({len(still)} part(s) refused by Telegram, retried once). "
+           "Ask again, or /thoughts.")
+    return ids
+
+
 # Choice buttons the head sends with tg.py buttons (TIK-1028 "use all the telegram features"): Rav taps one, the
 # head gets it as a turn, the message shows what he chose. tg.py writes BUTTONS; each question answers once.
 BUTTONS = os.path.join(STATE_DIR, "buttons.json")
+
+
+# A reply cut off by a dropped API connection is retried ONCE by itself (and says so). A second drop within 60 s of
+# that retry gets a "Try again" button instead, so the owner can wait for the network and press it later.
+RETRY_ERRORS = ("server_error", "overloaded", "connection", "api_error", "timeout", "rate_limit")
+RETRY_WINDOW_S = 60
+RETRY_TEXT = ("[Your previous reply was cut off by a connection error ({why}). Continue from where you stopped; "
+              "answer the owner's last message if you had not yet.]")
+RETRIES = os.path.join(STATE_DIR, "retry_buttons.json")
+
+
+def retryable(payload):
+    p = str(payload or "").lower()
+    return any(w in p for w in RETRY_ERRORS)
+
+
+def retry_or_offer(io, m, payload, now=time.time, enqueue=None, path=None, tok=None, sleep=time.sleep):
+    """-> 'retried' | 'offered'. Logged either way (no silent self-healing).
+    a rate_limit waits RATE_LIMIT_WAIT_S (bounded, said and logged) before its one retry."""
+    tok = tok or getattr(io, "tok", None)
+    t = now()
+    if t - _state.get("auto_retry_ts", 0) > RETRY_WINDOW_S:
+        limited = "rate_limit" in str(payload).lower()
+        tgapi._log("head", event2="auto_retry", why=str(payload)[:80], wait_s=RATE_LIMIT_WAIT_S if limited else 0)
+        if limited:
+            io.say(f"⚠️ My reply didn't come through ({payload}). Trying once more in {RATE_LIMIT_WAIT_S} s…")
+            sleep(RATE_LIMIT_WAIT_S)
+        else:
+            io.say(f"⚠️ The connection dropped ({payload}). Trying once more by myself…")
+        _state["auto_retry_ts"] = now()
+        (enqueue or _enqueue)(tok, m, RETRY_TEXT.format(why=str(payload)[:80]))
+        return "retried"
+    key = "%x" % int(t * 1000)
+    p = path or RETRIES
+    d = _jload(p, {})
+    d[key] = {"why": str(payload)[:80], "ts": t, "m": {k: m.get(k) for k in _KEEP_KEYS if k in m}}
+    _jsave(p, dict(sorted(d.items())[-20:]))
+    tgapi._log("head", event2="retry_offered", why=str(payload)[:80])
+    _send_card(tok, m, f"⚠️ My last reply didn't send ({payload}, retried once). Press when you think it's back, "
+               "or ask again.",
+               {"inline_keyboard": [[{"text": "🔁 Try again", "callback_data": f"hd:r:{key}"}]]})
+    return "offered"
+
+
+def on_retry_button(cq, data, tok, answer, path=None, enqueue=None):
+    """hd:r:<key> -> 'retried' | None. owner only, once per button."""
+    uid = (cq.get("from") or {}).get("id")
+    msg = cq.get("message") or {}
+    if uid not in HEAD_UIDS:
+        tgapi._log("head_refused_button", uid=uid, data=data[:20])
+        answer("Not yours."); return None
+    key = data.split(":", 2)[2] if data.count(":") >= 2 else ""
+    p = path or RETRIES
+    d = _jload(p, {})
+    r = d.pop(key, None)
+    if not r:
+        answer("Already retried."); return None
+    _jsave(p, d)
+    answer("Trying again.")
+    _state["auto_retry_ts"] = 0                       # a fresh drop after this press gets its one auto-retry again
+    try:
+        tgapi._api(tok, "editMessageText", chat_id=msg["chat"]["id"], message_id=msg["message_id"],
+                        text=(msg.get("text") or "") + "\n\n🔁 Trying again…")
+    except Exception as e:
+        tgapi._log("head", event2="retry_edit_fail", error=str(e)[:150])
+    tgapi._log("head", event2="retry_pressed", why=r.get("why"))
+    (enqueue or _enqueue)(tok, r.get("m") or {"from": {"id": uid}, "chat": msg.get("chat")},
+                          RETRY_TEXT.format(why=r.get("why")))
+    return "retried"
 
 
 def on_choice_button(cq, data, tok, answer, path=None, enqueue=None):

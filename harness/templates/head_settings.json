@@ -90,6 +90,17 @@
      }
     ]
    }
+  ],
+  "PermissionDenied": [
+   {
+    "hooks": [
+     {
+      "type": "command",
+      "command": "$HOME/harness/harness/hooks/head_hook.py",
+      "timeout": 10
+     }
+    ]
+   }
   ]
  },
  "showThinkingSummaries": true,

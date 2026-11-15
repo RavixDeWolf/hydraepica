@@ -37,6 +37,7 @@ hl.EDITS = os.path.join(_TMP, "edits.json")          # every turn test reads + c
 hl.MINIAPP_SOCK = os.path.join(_TMP, "no-miniapp.sock")   # a test can never speak on Rav's open Live page
 hl.INFLIGHT = os.path.join(_TMP, "inflight.json")         # a test turn must never look in flight to the real gateway
 hl.BUTTONS = os.path.join(_TMP, "buttons.json")
+hl.RETRIES = os.path.join(_TMP, "retry_buttons.json")
 # ...and the lab chat history (chat_ledger) is a temp DB with the real schema: answers are rows there now.
 import sqlite3  # noqa: E402
 import chat_ledger as cl  # noqa: E402
@@ -2416,6 +2417,83 @@ class DeleteThreadTest(unittest.TestCase):
         nl = hl._new_lane_mod()
         self.assertIsNotNone(nl.removable("techsup", None))
         self.assertIsNotNone(nl.removable("hb", 9100))
+
+
+
+class RetryDrop(unittest.TestCase):
+    """a dropped API connection is retried once by itself; a second drop within 60 s offers a button."""
+    def setUp(self):
+        if os.path.exists(hl.RETRIES): os.remove(hl.RETRIES)
+        hl._state["auto_retry_ts"] = 0
+        self.q, self.cards, self.said = [], [], []
+        self._o = (hl._send_card, pl._api)
+        hl._send_card = lambda tok, m, text, kb: self.cards.append((text, kb))
+        pl._api = lambda *a, **k: {}
+        class IO:
+            tok = "t"
+            def say(io, t): self.said.append(t)
+        self.io = IO()
+        self.m = {"chat": {"id": 111111111}, "from": {"id": 111111111}, "message_id": 5}
+        self.enq = lambda tok, m, text: self.q.append((m, text))
+
+    def tearDown(self):
+        hl._send_card, pl._api = self._o
+
+    def test_which_errors_retry(self):
+        self.assertTrue(hl.retryable("server_error"))
+        self.assertTrue(hl.retryable("API Error: Connection lost mid-response"))
+        self.assertFalse(hl.retryable("the head stopped with an error"))
+        self.assertFalse(hl.retryable(None))
+
+    def test_first_drop_retries_once_and_says_so(self):
+        self.assertEqual(hl.retry_or_offer(self.io, self.m, "server_error", now=lambda: 1000, enqueue=self.enq), "retried")
+        self.assertEqual(len(self.q), 1); self.assertIn("cut off by a connection error", self.q[0][1])
+        self.assertIn("Trying once more", self.said[0]); self.assertEqual(self.cards, [])
+
+    def test_second_drop_within_a_minute_offers_a_button(self):
+        hl.retry_or_offer(self.io, self.m, "server_error", now=lambda: 1000, enqueue=self.enq)
+        self.assertEqual(hl.retry_or_offer(self.io, self.m, "server_error", now=lambda: 1030, enqueue=self.enq), "offered")
+        self.assertEqual(len(self.q), 1)                                   # no second auto-retry
+        data = self.cards[0][1]["inline_keyboard"][0][0]["callback_data"]
+        self.assertTrue(data.startswith("hd:r:"))
+        self.assertTrue(hl.jrelay.BUTTON_DATA.match(data) if hasattr(hl.jrelay, "BUTTON_DATA") else True)
+        # later drop (>60 s) auto-retries again
+        self.assertEqual(hl.retry_or_offer(self.io, self.m, "server_error", now=lambda: 1100, enqueue=self.enq), "retried")
+
+    def test_button_is_owner_only_and_single_use(self):
+        hl._state["auto_retry_ts"] = 1000
+        hl.retry_or_offer(self.io, self.m, "server_error", now=lambda: 1010, enqueue=self.enq)
+        data = self.cards[0][1]["inline_keyboard"][0][0]["callback_data"]
+        ans = []
+        cq = lambda uid: {"from": {"id": uid}, "message": {"chat": {"id": uid}, "message_id": 9, "text": "x"}}
+        self.assertIsNone(hl.on_retry_button(cq(999), data, "t", ans.append, enqueue=self.enq))
+        self.assertEqual(self.q, [])
+        self.assertEqual(hl.on_retry_button(cq(111111111), data, "t", ans.append, enqueue=self.enq), "retried")
+        self.assertEqual(len(self.q), 1); self.assertEqual(self.q[0][0]["message_id"], 5)
+        self.assertEqual(hl._state["auto_retry_ts"], 0)
+        self.assertIsNone(hl.on_retry_button(cq(111111111), data, "t", ans.append, enqueue=self.enq))
+        self.assertEqual(len(self.q), 1)
+
+    def test_on_button_routes_hd_r(self):
+        seen = []
+        o = hl.on_retry_button
+        hl.on_retry_button = lambda cq, data, tok, answer: seen.append(data)
+        try:
+            hl.on_button({"from": {"id": 111111111}, "message": {}}, "hd:r:abc", "t", call=lambda c: {})
+        finally:
+            hl.on_retry_button = o
+        self.assertEqual(seen, ["hd:r:abc"])
+
+    def test_real_turn_with_server_error_retries(self):
+        t = Turn("run"); t.setUp()
+        hl._state["auto_retry_ts"] = -1e9
+        got, o = [], hl._enqueue
+        hl._enqueue = lambda tok, m, text: got.append(text)
+        try:
+            t.run_turn("hi", [[ev("StopFailure", error="server_error")]])
+        finally:
+            hl._enqueue = o
+        self.assertEqual(len(got), 1); self.assertIn("connection error", got[0])
 
 
 if __name__ == "__main__":
