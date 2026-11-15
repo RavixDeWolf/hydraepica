@@ -374,7 +374,7 @@ def me(request: Request):
     person, uid = person_for(request)
     return {"person": person, "settings_admin": uid in SETTINGS_ADMINS, "agent": config.AGENT_NAME,
             "others": sorted(p for p in PEOPLE.values() if p != person), "live": uid in LIVE_USERS,
-            "screens": _screen_names()}
+            "screens": _screen_names(), "mail": _mail_ok(uid)}
 
 
 @app.get("/api/ticket")
@@ -592,6 +592,97 @@ def _vault_write(uid, name, value, replace):
         _vault_note(f"🔐 Vault: {out['name']} {'replaced' if out['replaced'] else 'added'} from the app by {who} "
                     f"({out['fingerprint']})." + (" Old value kept for rollback." if out["replaced"] else ""))
     return {"ok": True, **out}
+
+
+# ---- Mail tab (optional plugin, harness/stage/mail.py): your own mailbox over IMAP/SMTP, allow-listed people only.
+# Reading needs a normal sign-in; send and delete need a fresh one (the vault's 15 min) and confirm=true. Every
+# action is audited, never with bodies or passwords.
+MAIL_AUDIT = STATE / "mail_audit.jsonl"
+
+
+def _mail_ok(uid):
+    try:
+        import mail
+        return mail.allowed(uid)
+    except Exception:
+        return False
+
+
+def _mail_user(request, fresh=False):
+    uid = vault_admin_like(request, fresh)
+    import mail
+    if not mail.allowed(uid):
+        raise HTTPException(403, "mail is not on for you")
+    return uid, config.USERS.get(uid, str(uid))
+
+
+def vault_admin_like(request, fresh):
+    """A verified uid from initData in the header (never a URL ticket); fresh=True = under VAULT_FRESH_S old."""
+    raw = request.headers.get("x-init-data", "")
+    try:
+        kw = {"max_age": VAULT_FRESH_S} if fresh else {}
+        user = tg_webapp_auth.verify(raw, bot_token(), allowed_ids=set(PEOPLE), **kw)
+    except tg_webapp_auth.AuthError as e:
+        if fresh and e.status == 401 and raw:
+            raise HTTPException(401, "sign-in too old for sending or deleting: close and reopen the app")
+        raise HTTPException(e.status, e.detail)
+    return int(user["id"])
+
+
+def _mail_do(who, action, fn, **meta):
+    import mail
+    try:
+        out = fn()
+    except mail.MailError as e:
+        mail.audit(MAIL_AUDIT, who, action, ok=False, why=e.detail, **meta)
+        raise HTTPException(e.status, e.detail)
+    except Exception as e:                       # server down, login refused...: said and audited, never hidden
+        why = f"{type(e).__name__}: {str(e)[:160]}"
+        mail.audit(MAIL_AUDIT, who, action, ok=False, why=why, **meta)
+        raise HTTPException(502, f"mail server: {why}")
+    mail.audit(MAIL_AUDIT, who, action, ok=True, **meta)
+    return out
+
+
+@app.get("/api/mail")
+def mail_list(request: Request, folder: str = "INBOX", n: int = 30):
+    uid, who = _mail_user(request)
+    import mail
+    s = mail.settings()
+    return {"messages": _mail_do(who, "list", lambda: mail.list_messages(s, folder, n), folder=folder)}
+
+
+@app.get("/api/mail/msg/{uid_}")
+def mail_read(uid_: str, request: Request, folder: str = "INBOX"):
+    uid, who = _mail_user(request)
+    import mail
+    s = mail.settings()
+    return _mail_do(who, "read", lambda: mail.read_message(s, uid_, folder), msg=uid_, folder=folder)
+
+
+@app.post("/api/mail/send")
+async def mail_send(request: Request):
+    uid, who = _mail_user(request, fresh=True)
+    body = await request.json()
+    if body.get("confirm") is not True:
+        raise HTTPException(400, "confirm=true is required to send")
+    import mail
+    s = mail.settings()
+    args = [str(body.get(k) or "") for k in ("to", "subject", "text", "cc", "in_reply_to")]
+    return await asyncio.to_thread(_mail_do, who, "send", lambda: mail.send(s, *args), to=args[0], cc=args[3])
+
+
+@app.post("/api/mail/delete")
+async def mail_delete(request: Request):
+    uid, who = _mail_user(request, fresh=True)
+    body = await request.json()
+    if body.get("confirm") is not True:
+        raise HTTPException(400, "confirm=true is required to delete")
+    import mail
+    s = mail.settings()
+    m_uid, folder = str(body.get("uid") or ""), str(body.get("folder") or "INBOX")
+    return await asyncio.to_thread(_mail_do, who, "delete", lambda: mail.delete_message(s, m_uid, folder),
+                                   msg=m_uid, folder=folder)
 
 
 @app.post("/api/stage-report")

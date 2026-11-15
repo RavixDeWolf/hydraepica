@@ -5,7 +5,6 @@ Lab features that are not in the public core yet. Each one is tagged `hydra:core
 
 | Feature | Tag | Notes |
 |---|---|---|
-| Email tab in the stage | hydra:plugin | Bring-your-own IMAP/SMTP in config; password from an env var. Never tied to a hosted mail service. |
 
 ## Ported
 
@@ -18,6 +17,7 @@ Lab features that are not in the public core yet. Each one is tagged `hydra:core
 | Stage html pages report errors and blank canvases (with a snapshot) to the head that posted them | hydra:core | `harness/stage/stage_report.py` |
 | A head about to start the wrong Claude Code says so in its topic | hydra:core | `harness/cli_check.py`, ExecStartPre in the head unit |
 | Vault: encrypted secrets, `vault:NAME` in the config, write-only add/replace from the stage's Settings | hydra:core | `harness/vault.py`, `/api/vault*` |
+| Mail tab: bring-your-own IMAP/SMTP, password from the vault | hydra:plugin | `harness/stage/mail.py`, `/api/mail*` (a new build; the lab's tab frames its own mail service) |
 
 ## Queued
 

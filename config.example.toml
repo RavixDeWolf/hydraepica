@@ -91,6 +91,17 @@ key_env = "OPENROUTER_API_KEY"
 # dir = "~/screen"
 # show_url = "http://den-pc.local:8781/api/show"
 
+# Optional plugin: a Mail tab in the stage for your own mailbox (IMAP + SMTP). Off until imap_host is set.
+# [mail]
+# imap_host = "imap.example.com"     # 993, TLS
+# smtp_host = "smtp.example.com"
+# smtp_port = 465                    # 465 TLS, or 587 STARTTLS
+# user = "me@example.com"
+# password = "vault:MAIL_PASSWORD"   # vault.py set MAIL_PASSWORD, or the stage's Settings
+# from = "Me <me@example.com>"
+# trash = "Trash"                    # delete moves here when the server has it
+# users = [111111111]                # who sees the tab; default the owner only
+
 # Optional: voice notes in the agent's voice (Piper TTS).
 # [voice]
 # piper = "~/piper/venv/bin/piper"

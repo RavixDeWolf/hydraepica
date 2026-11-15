@@ -34,6 +34,10 @@ Say what you found, how to reproduce it, and what it lets someone do. You will g
   value. Every phone write is said in Telegram; a replaced value is kept for rollback.
   `tools/scan.py` refuses a commit that carries a token, a key, a private address or a home path.
 
+- **Mail tab (optional):** only the people in `[mail] users` (default the owner), signed in with initData in a header
+  (never a URL ticket). Sending and deleting need a sign-in under 15 minutes old and an explicit confirm. Mail is
+  shown as plain text, never rendered as HTML. Every action is a line in `mail_audit.jsonl` (no bodies, no passwords).
+
 ## Known limits
 
 - The heads run as an ordinary Unix user. `headsafe`'s "the safety net is off limits" is a rule plus a deny list,

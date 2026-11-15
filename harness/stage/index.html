@@ -187,6 +187,27 @@
     <p id="cam-note" class="muted">Hold to talk as many times as you like; each clip is heard right away. Tap <span data-agent>Agent</span>'s turn when you're done.</p>
   </section>
 
+  <section id="view-mail" class="view">
+    <div id="m-listv">
+      <div class="row"><h2 style="flex:1;margin:0">Mail</h2><button class="btn" onclick="mailCompose()">✏️ New</button><button class="btn" onclick="mailList()">↻</button></div>
+      <div id="m-list"></div>
+    </div>
+    <div id="m-readv" style="display:none">
+      <div class="row"><button class="btn" onclick="mailBack()">← Inbox</button><span style="flex:1"></span>
+        <button class="btn" onclick="mailReply()">↩️ Reply</button><button class="btn" onclick="mailDelete()">🗑 Delete</button></div>
+      <div class="item"><div id="m-head" class="muted" style="white-space:pre-wrap"></div>
+        <div id="m-body" style="white-space:pre-wrap;word-break:break-word;margin-top:10px"></div></div>
+    </div>
+    <div id="m-compv" style="display:none">
+      <div class="row"><button class="btn" onclick="mailBack()">← Cancel</button></div>
+      <input id="c-to" class="field" placeholder="To" autocomplete="off" autocapitalize="off" spellcheck="false">
+      <input id="c-subj" class="field" placeholder="Subject">
+      <textarea id="c-text" class="field" rows="10" placeholder="Message"></textarea>
+      <div class="row"><button class="btn" id="c-send" onclick="mailSend()">Send</button><span id="c-msg" class="muted"></span></div>
+    </div>
+    <p class="muted">Your own mailbox, shown as plain text. Sending and deleting ask first, and every action is logged.</p>
+  </section>
+
   <section id="view-settings" class="view">
     <h2>Settings</h2>
     <div class="item kv">
@@ -214,6 +235,7 @@
   <button class="nav-item active" data-v="stage" id="nav-stage"><span class="nav-icon">🎭</span>Stage</button>
   <button class="nav-item" data-v="browser" onclick="switchView('browser')"><span class="nav-icon">🌐</span>Browser</button>
   <button class="nav-item" data-v="cam" id="nav-cam" style="display:none" onclick="switchView('cam')"><span class="nav-icon">👁</span>Live</button>
+  <button class="nav-item" data-v="mail" id="nav-mail" style="display:none" onclick="switchView('mail')"><span class="nav-icon">✉️</span>Mail</button>
   <button class="nav-item" data-v="settings" onclick="switchView('settings')"><span class="nav-icon">⚙️</span>Settings</button>
 </nav>
 <div id="lb"><img id="lb-img" alt=""><div class="lb-bar"><button class="btn" onclick="lbStep(-1)">◀</button>
@@ -627,6 +649,57 @@ async function loadSettings() {
   document.getElementById("s-mode").textContent = hd.mode || "unknown";
   if (m.settings_admin) { document.getElementById("s-vault").style.display = ""; vaultList(); }
 }
+// ---- Mail tab: list, read (plain text only), reply / new, delete. Send and delete confirm first. ----
+let mCur = null;
+function mailShow(which) { ["m-listv", "m-readv", "m-compv"].forEach(id => document.getElementById(id).style.display = id === which ? "" : "none"); }
+async function mailList() {
+  mailShow("m-listv"); const box = document.getElementById("m-list"); box.textContent = "Loading…";
+  try { const { messages } = await api("/api/mail");
+    box.innerHTML = messages.length ? "" : "<p class='muted'>No messages.</p>";
+    messages.forEach(m => { const d = document.createElement("div"); d.className = "item"; d.style.cursor = "pointer";
+      d.innerHTML = `<div style="font-weight:${m.seen ? 400 : 700}">${esc(m.subject)}</div><div class="muted">${esc(m.from)} · ${esc(m.date)}</div>`;
+      d.onclick = () => mailOpen(m.uid); box.appendChild(d); });
+  } catch (e) { box.textContent = "Couldn't load mail: " + e.message; }
+}
+async function mailOpen(uid) {
+  mailShow("m-readv"); document.getElementById("m-head").textContent = "Loading…"; document.getElementById("m-body").textContent = "";
+  try { mCur = await api("/api/mail/msg/" + encodeURIComponent(uid));
+    document.getElementById("m-head").textContent = `From: ${mCur.from}\nTo: ${mCur.to}${mCur.cc ? "\nCc: " + mCur.cc : ""}\n${mCur.date}\n\n${mCur.subject}`
+      + (mCur.attachments.length ? `\n📎 ${mCur.attachments.join(", ")}` : "");
+    document.getElementById("m-body").textContent = mCur.text || "(no text)";
+  } catch (e) { document.getElementById("m-head").textContent = "Couldn't open it: " + e.message; }
+}
+function mailBack() { mailList(); }
+function mailCompose(to, subj, text, irt) {
+  mailShow("m-compv"); document.getElementById("c-to").value = to || ""; document.getElementById("c-subj").value = subj || "";
+  document.getElementById("c-text").value = text || ""; document.getElementById("c-msg").textContent = ""; mCompIrt = irt || "";
+}
+let mCompIrt = "";
+function mailReply() {
+  if (!mCur) return;
+  const quote = (mCur.text || "").split("\n").slice(0, 40).map(l => "> " + l).join("\n");
+  mailCompose(mCur.from, /^re:/i.test(mCur.subject) ? mCur.subject : "Re: " + mCur.subject, `\n\n${mCur.from} wrote:\n${quote}`, mCur.message_id);
+}
+async function mailPost(path, body) {
+  const r = await fetch(path, { method: "POST", headers: Object.assign({ "Content-Type": "application/json" }, H), body: JSON.stringify(body) });
+  const j = await r.json().catch(() => ({})); if (!r.ok) throw new Error(j.detail || r.status); return j;
+}
+async function mailSend() {
+  const to = document.getElementById("c-to").value.trim(), subject = document.getElementById("c-subj").value.trim(),
+        text = document.getElementById("c-text").value, msg = document.getElementById("c-msg"), btn = document.getElementById("c-send");
+  if (!to || !text.trim()) { msg.textContent = "To and a message, please."; return; }
+  if (!confirm(`Send "${subject || "(no subject)"}" to ${to}?`)) return;
+  btn.disabled = true; msg.textContent = "Sending…";
+  try { await mailPost("/api/mail/send", { to, subject, text, in_reply_to: mCompIrt, confirm: true }); toast("Sent"); mailList(); }
+  catch (e) { msg.textContent = "Not sent: " + e.message; }
+  btn.disabled = false;
+}
+async function mailDelete() {
+  if (!mCur || !confirm(`Delete "${mCur.subject}"?`)) return;
+  try { const r = await mailPost("/api/mail/delete", { uid: mCur.uid, confirm: true });
+        toast(r.moved_to ? "Moved to " + r.moved_to : "Deleted"); mailList(); }
+  catch (e) { toast("Not deleted: " + e.message); }
+}
 async function vaultList() {
   const box = document.getElementById("v-list");
   try { const { entries } = await api("/api/vault");
@@ -660,6 +733,7 @@ function switchView(v) {
   document.querySelectorAll(".nav-item").forEach(b => b.classList.toggle("active", b.dataset.v === v));
   if (v === "browser") { loadBrowser(); browserShowOpen(); } else if (bLive) browserLiveToggle(false);
   if (v === "settings") loadSettings();
+  if (v === "mail") mailList();
   if (v !== "cam") camStop();
   curView = v; rememberPlace();
 }
@@ -895,6 +969,7 @@ async function live() {
     const who = await api("/api/me"); me = who.person; OTHERS_LIST = who.others || []; CAN_LIVE = !!who.live; SCREENS = who.screens || [];
     AGENT = who.agent || AGENT; document.title = AGENT;
     document.querySelectorAll("[data-agent]").forEach(e => e.textContent = AGENT);
+    if (who.mail) document.getElementById("nav-mail").style.display = "";
     if (CAN_LIVE) {
       document.getElementById("nav-cam").style.display = "";
       // clips recorded before the app was closed are still on the host: show them, still sendable
