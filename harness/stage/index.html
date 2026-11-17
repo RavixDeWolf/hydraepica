@@ -24,6 +24,7 @@
   /* Rav 2026-10-26: a page on the stage filled only ~half the screen and scrolled inside its own box.
      Size it to the visible viewport minus the stage bar, the nav and the timestamp. */
   .item.html-item { padding:6px; }
+  .jc-bar { display:flex; align-items:center; gap:8px; justify-content:space-between; padding:6px 2px 0; }
   .item iframe { width:100%; height:calc(var(--tg-viewport-stable-height, 100vh) - 190px); min-height:320px;
                  border:0; border-radius:8px; background:#fff; display:block; }
   .gal { display:grid; grid-template-columns:repeat(3,1fr); gap:6px; }
@@ -208,6 +209,11 @@
     <p class="muted">Your own mailbox, shown as plain text. Sending and deleting ask first, and every action is logged.</p>
   </section>
 
+  <section id="view-heads" class="view">
+    <div class="row"><button class="btn" onclick="switchView('settings')">‹ Settings</button><h2 style="flex:1;margin:0 0 0 8px">Heads</h2></div>
+    <p class="muted">A head with idle sleep turned on (HEAD_IDLE_SLEEP_S on its unit) pauses after that long with no messages and nothing running, and wakes by itself on the next message (about 20 s). Always on keeps it running.</p>
+    <div id="heads-list"><p class="muted">Loading…</p></div>
+  </section>
   <section id="view-settings" class="view">
     <h2>Settings</h2>
     <div class="item kv">
@@ -217,6 +223,10 @@
     <div class="item dev">
       <div><div class="name">Save my place</div><div class="state">Reopen the app where you left it</div></div>
       <button class="switch on" id="s-place" aria-label="Save my place" onclick="togglePlace()"></button>
+    </div>
+    <div class="item dev" id="s-heads" style="display:none;cursor:pointer" onclick="switchView('heads')">
+      <div><div class="name">Heads</div><div class="state">Which heads stay on instead of pausing when idle</div></div>
+      <button class="btn" aria-label="Open heads">›</button>
     </div>
     <div id="s-vault" style="display:none">
       <h2>Vault</h2>
@@ -388,12 +398,59 @@ function render(it) {
   if (it.kind === "html") {               // the agent-made pages run in a sandbox: no access to this app or its login
     el.classList.add("html-item");
     const f = document.createElement("iframe");
-    f.setAttribute("sandbox", "allow-scripts"); f.srcdoc = it.html || "";
+    f.setAttribute("sandbox", "allow-scripts"); f.srcdoc = withCommenter(it.html || "");
     f.dataset.stageId = it.id;              // its reporter's errors go back to the head that made it
     el.insertBefore(f, el.querySelector(".when"));
+    const cb = document.createElement("div"); cb.className = "jc-bar"; cb.dataset.stageId = it.id;
+    cb.innerHTML = '<span class="muted">Select text on the page to comment.</span>';
+    el.insertBefore(cb, el.querySelector(".when"));
   }
   return el;
 }
+
+// ---- Highlight-to-comment inside html stage pages. The page posts {hydraComment, op}; the server keeps the notes
+// and we paint them back; Send hands the unsent ones to the lane that published the page. ----
+let COMMENTER = "";
+const commenterReady = fetch("/api/commenter.js").then(r => r.json()).then(j => { COMMENTER = j.script || ""; }).catch(() => {});
+function withCommenter(h) {
+  if (!COMMENTER || h.includes("window.__jc")) return h;
+  const m = h.match(/<head[^>]*>/i);
+  return m ? h.slice(0, m.index + m[0].length) + COMMENTER + h.slice(m.index + m[0].length) : COMMENTER + h;
+}
+const JH = () => Object.assign({ "Content-Type": "application/json" }, H);
+function jcShow(f, list) {
+  f.contentWindow.postMessage({ hydraComments: list }, "*");
+  const bar = document.querySelector('.jc-bar[data-stage-id="' + f.dataset.stageId + '"]'); if (!bar) return;
+  const fresh = list.filter(c => !c.sent_ts).length;
+  bar.innerHTML = "";
+  const t = document.createElement("span"); t.className = "muted";
+  t.textContent = list.length ? "💬 " + list.length + " comment" + (list.length > 1 ? "s" : "") + (fresh ? " · " + fresh + " not sent" : " · all sent")
+                              : "Select text on the page to comment."; bar.appendChild(t);
+  if (fresh) {
+    const b = document.createElement("button"); b.className = "btn"; b.textContent = "Send " + fresh;
+    b.onclick = async () => { b.disabled = true;
+      try { const r = await api("/api/comments", { method: "POST", headers: JH(), body: JSON.stringify({ id: f.dataset.stageId, op: "send" }) });
+            if (!r.ok) throw new Error(r.why || "not sent");
+            toast("Sent " + r.sent + " to " + r.lane); jcShow(f, r.comments || list);
+      } catch (e) { toast("Send failed: " + e.message); b.disabled = false; } };
+    bar.appendChild(b);
+  }
+}
+window.addEventListener("message", async e => {
+  if (!e.data || e.data.hydraComment !== 1) return;
+  const f = [...document.querySelectorAll("iframe[data-stage-id]")].find(x => x.contentWindow === e.source);
+  if (!f) return;
+  const id = f.dataset.stageId, d = e.data;
+  try {
+    let r;
+    if (d.op === "hello") r = await api("/api/comments?id=" + encodeURIComponent(id));
+    else if (d.op === "add") r = await api("/api/comments", { method: "POST", headers: JH(),
+        body: JSON.stringify({ id, op: "add", quote: d.quote, prefix: d.prefix, suffix: d.suffix, note: d.note }) });
+    else if (d.op === "del") r = await api("/api/comments", { method: "POST", headers: JH(), body: JSON.stringify({ id, op: "del", cid: d.cid }) });
+    else return;
+    jcShow(f, r.comments || []);
+  } catch (err) { toast("Comment failed: " + err.message); }
+});
 
 // A stage page's reporter (injected by the server) posts its errors here; only from our own stage iframes.
 window.addEventListener("message", e => {
@@ -496,7 +553,7 @@ function setMode(m) {
 }
 function setList(l) { list = l; setMode("list"); }
 
-async function loadStage() { st = await api("/api/stage"); draw(); }
+async function loadStage() { await commenterReady; st = await api("/api/stage"); draw(); }
 async function act(where, id, action, to, title) {
   try {
     const r = await api("/api/act", { method: "POST", headers: Object.assign({ "Content-Type": "application/json" }, H),
@@ -647,7 +704,25 @@ async function loadSettings() {
   const m = await api("/api/me"); const hd = await api("/api/head");
   document.getElementById("s-me").textContent = m.person;
   document.getElementById("s-mode").textContent = hd.mode || "unknown";
-  if (m.settings_admin) { document.getElementById("s-vault").style.display = ""; vaultList(); }
+  if (m.settings_admin) { document.getElementById("s-vault").style.display = ""; document.getElementById("s-heads").style.display = ""; vaultList(); }
+}
+// Per-head "Always on" (no idle pause). Admins only; the server refuses everyone else.
+async function loadHeads() {
+  const box = document.getElementById("heads-list");
+  let r; try { r = await api("/api/heads"); } catch (e) { box.innerHTML = `<p class="muted">Couldn't load: ${esc(e.message)}</p>`; return; }
+  if (!r.heads.length) { box.innerHTML = '<p class="muted">No head units found.</p>'; return; }
+  box.innerHTML = r.heads.map(h => `<div class="item dev" data-lane="${esc(h.lane)}">
+      <div><div class="name">${esc(h.lane)}</div><div class="state">${h.asleep ? "Paused (wakes on the next message)" : "Running"} · Always on</div></div>
+      <button class="switch${h.always_on ? " on" : ""}" role="switch" aria-checked="${h.always_on}" aria-label="Always on: ${esc(h.lane)}" onclick="headAlwaysOn(this)"></button>
+    </div>`).join("");
+}
+async function headAlwaysOn(sw) {
+  const lane = sw.closest("[data-lane]").dataset.lane, want = !sw.classList.contains("on");
+  sw.disabled = true; sw.classList.toggle("on", want); sw.setAttribute("aria-checked", String(want));
+  try {
+    await api("/api/heads/always_on", { method: "POST", headers: JH(), body: JSON.stringify({ lane, on: want }) });
+  } catch (e) { sw.classList.toggle("on", !want); sw.setAttribute("aria-checked", String(!want)); showErr("Not saved: " + e.message); }
+  finally { sw.disabled = false; }
 }
 // ---- Mail tab: list, read (plain text only), reply / new, delete. Send and delete confirm first. ----
 let mCur = null;
@@ -730,9 +805,10 @@ async function vaultSave(replace) {
 }
 function switchView(v) {
   document.querySelectorAll(".view").forEach(s => s.classList.toggle("active", s.id === "view-" + v));
-  document.querySelectorAll(".nav-item").forEach(b => b.classList.toggle("active", b.dataset.v === v));
+  document.querySelectorAll(".nav-item").forEach(b => b.classList.toggle("active", b.dataset.v === (v === "heads" ? "settings" : v)));
   if (v === "browser") { loadBrowser(); browserShowOpen(); } else if (bLive) browserLiveToggle(false);
   if (v === "settings") loadSettings();
+  if (v === "heads") loadHeads();
   if (v === "mail") mailList();
   if (v !== "cam") camStop();
   curView = v; rememberPlace();

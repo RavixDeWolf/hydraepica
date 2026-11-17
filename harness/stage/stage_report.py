@@ -68,7 +68,7 @@ def message(item, problems, snap_path):
     t = item.get("title") or item.get("id")
     s = f"\nSnapshot: {snap_path}" if snap_path else ""
     return (f"🧩 Your stage page \"{t}\" (id {item.get('id')}) reported problems when it opened on the Mini App. "
-            "Fix it and re-publish, and tell the owner only if it changes what he saw.\n" + "\n".join(lines) + s)
+            "Fix it and re-publish, and tell the owner only if it changes what they saw.\n" + "\n".join(lines) + s)
 
 
 def _handoff(lane, text):

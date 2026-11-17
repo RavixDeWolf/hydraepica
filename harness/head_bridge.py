@@ -27,6 +27,64 @@ TMUX_L = os.environ.get("HEAD_TMUX_L", "")        # tmux -L <name>: a private tm
 POLL_S = float(os.environ.get("HEAD_POLL_S", "0.5"))
 ALLOWED_KEYS = {"Enter", "Escape", "C-c", "Up", "Down", "Left", "Right", "Tab", "y", "n", "1", "2", "3"}
 MAX_SEND = 8000
+# Idle sleep (2026-11-15): an idle REPL is put to SLEEP (its tmux session ended, ~0.3 GB RAM freed) after IDLE_SLEEP_S with no
+# send/key and an unchanged idle screen. The marker file says it is asleep (not dead): status reports "asleep", and the
+# lane wakes it with "ensure" (claude --continue = same conversation) before typing the message. 0 = never sleep.
+IDLE_SLEEP_S = float(os.environ.get("HEAD_IDLE_SLEEP_S", "0"))
+SLEEP_CHECK_S = float(os.environ.get("HEAD_SLEEP_CHECK_S", "60"))
+ASLEEP = os.path.join(os.path.dirname(SOCK), "ASLEEP")
+# The idle clock survives a bridge restart. The last activity time is kept in ACTIVE (written at most once a minute);
+# a new bridge starts from it (or, the first time, from the head's last hook event), not from "now".
+ACTIVE = os.path.join(os.path.dirname(SOCK), "last_active")
+ACT_WRITE_S = 60
+
+
+def _load_act(now=None):
+    """-> the last activity time to start the idle clock from: ACTIVE, else events.jsonl mtime, else now. Never in the future."""
+    now = time.time() if now is None else now
+    d = os.path.dirname(ACTIVE)
+    for read in (lambda: float(open(ACTIVE).read().strip()), lambda: os.path.getmtime(os.path.join(d, "events.jsonl"))):
+        try:
+            return min(read(), now)
+        except (OSError, ValueError):
+            pass
+    return now
+
+
+_act = {"t": _load_act(), "screen": None, "w": 0.0}
+
+
+def _mark(now=None):
+    """Activity now: reset the idle clock and keep it on disk (at most once per ACT_WRITE_S) so a restart does not reset it."""
+    now = time.time() if now is None else now
+    _act["t"] = now
+    if now - _act.get("w", 0.0) >= ACT_WRITE_S:
+        try:
+            with open(ACTIVE + ".tmp", "w") as f:
+                f.write("%.0f\n" % now)
+            os.replace(ACTIVE + ".tmp", ACTIVE)
+            _act["w"] = now
+        except OSError as e:
+            log("could not save the idle clock: %r" % (e,))
+
+
+# The owner's per-head "Always on" list, set from the stage's Settings > Heads page. A listed head never sleeps.
+ALWAYS_ON = os.environ.get("HEAD_ALWAYS_ON") or os.path.join(
+    os.path.expanduser(os.environ.get("HARNESS_STATE_DIR", "~/.local/state/harness")), "always_on.json")
+LANE = os.environ.get("HEAD_LANE") or "main"
+WAKE_WAIT_S = float(os.environ.get("HEAD_WAKE_WAIT_S", "40"))
+
+
+def always_on():
+    """-> True when this lane is on the Always-on list. Unreadable list = True (never sleep on a guess), logged."""
+    try:
+        with open(ALWAYS_ON) as f:
+            return LANE in (json.load(f).get("lanes") or [])
+    except FileNotFoundError:
+        return False
+    except Exception as e:
+        log("always_on list unreadable (%r): staying awake" % (e,))
+        return True
 
 
 def log(m):
@@ -56,16 +114,33 @@ def ensure():
     """Start the detached session if absent. -> (started, detail). A start failure is returned, never swallowed."""
     if alive():
         return False, "already running"
+    if os.path.exists(ASLEEP):
+        try: os.unlink(ASLEEP)
+        except OSError as e: log("WAKE could not remove the ASLEEP marker: %r" % (e,))
+        log("WAKE: asleep session started again (claude --continue)")
+    _mark(); _act["screen"] = None
     os.makedirs(CWD, exist_ok=True)
     # TIK-1082: a second head (HEAD_LANE=techsup) passes its lane and state dir into the REPL, so its hooks and
     # tg.py write to ITS folder and thread; tmux would otherwise hand it the tmux server's environment.
-    env = [a for k in ("HEAD_LANE", "HEAD_STATE_DIR") if os.environ.get(k) for a in ("-e", f"{k}={os.environ[k]}")]
+    env = [a for k, v in lane_env(os.environ).items() for a in ("-e", f"{k}={v}")]
     rc, out, err = tmux("new-session", "-d", "-s", SESSION, *env, "-x", "200", "-y", "50", "-c", CWD, CMD)
     if rc != 0:
         log("new-session FAILED rc=%d %s" % (rc, err.strip()[:200]))
         return False, "new-session failed: %s" % err.strip()[:200]
     log("session %s started: %s" % (SESSION, CMD))
     return True, "started"
+
+
+def lane_env(environ):
+    """Env passed into a head's REPL. A lane head also gets its OWN headsafe probe route (HEADSAFE_SOCK/HEADSAFE_EVENTS,
+    read by safety/headsafe.py), so a lane's self-edit probe goes to that lane, not to the main head. (2026-11-16: a lane's
+    probe landed on the main head, went unanswered, and its good deploy was reverted.) The main head keeps the defaults."""
+    out = {k: environ[k] for k in ("HEAD_LANE", "HEAD_STATE_DIR") if environ.get(k)}
+    sd, sock = environ.get("HEAD_STATE_DIR"), environ.get("HEAD_SOCKET")
+    if sd and sock and (environ.get("HEAD_LANE") or "main") != "main":
+        out["HEADSAFE_SOCK"] = sock
+        out["HEADSAFE_EVENTS"] = os.path.join(sd, "events.jsonl")
+    return out
 
 
 def capture(lines=60, ansi=False):
@@ -93,7 +168,7 @@ _IDLE = re.compile(r"(^\s*[>│❯]\s*$|^\s*[>❯]\s|\? for shortcuts|bypass per
 def classify_pane(lines, is_alive=True):
     """Pure. -> state string. Order matters: a login or trust gate beats everything, a permission prompt beats busy."""
     if not is_alive:
-        return "dead"
+        return "asleep" if os.path.exists(ASLEEP) else "dead"
     text = "\n".join(lines[-40:])
     if _LOGIN.search(text):
         return "login_required"
@@ -110,6 +185,88 @@ def classify_pane(lines, is_alive=True):
     return "unknown"
 
 
+def sleep_check(now=None):
+    """One sleeper tick. -> "slept" | reason it stayed awake. Sleeps only an IDLE screen that has not changed and saw no
+    send/key for IDLE_SLEEP_S; anything else (busy, a prompt, unknown) keeps it awake. Every sleep is logged."""
+    now = time.time() if now is None else now
+    if IDLE_SLEEP_S <= 0:
+        return "disabled"
+    if always_on():
+        return "always on"
+    if not alive():
+        return "not running"
+    lines = capture(60)
+    screen = [l for l in lines if l.strip()]
+    if _act["screen"] is None:                      # first look after a (re)start: not activity, keep the saved clock
+        _act["screen"] = screen
+    elif screen != _act["screen"]:
+        _act["screen"] = screen; _mark(now)
+        return "screen changed"
+    st = classify_pane(lines, True)
+    if st != "idle":
+        return "state " + st
+    idle = now - _act["t"]
+    if idle < IDLE_SLEEP_S:
+        return "idle %d s" % idle
+    busy_kids = working_children()
+    if busy_kids:
+        return "background work: " + ", ".join(busy_kids[:3])
+    try:
+        with open(ASLEEP, "w") as f:
+            f.write("%s asleep after %d s idle; the next message wakes it\n" % (time.strftime("%F %T"), idle))
+    except OSError as e:
+        log("SLEEP skipped: cannot write the ASLEEP marker (%r)" % (e,))
+        return "marker failed"
+    rc, _, err = tmux("kill-session", "-t", SESSION)
+    if rc != 0:
+        log("SLEEP FAILED: kill-session rc=%d %s" % (rc, err.strip()[:120]))
+        try: os.unlink(ASLEEP)
+        except OSError: pass
+        return "kill failed"
+    log("SLEEP: %s idle %d min -> session ended to free memory; the next message wakes it" % (SESSION, idle // 60))
+    return "slept"
+
+
+# Long-lived helpers every REPL keeps: MCP servers and the shell wrapper. Anything else under the REPL (a background
+# job, a BOB, a render) is real work, and a session with real work is never put to sleep.
+_HELPER = re.compile(r"(npm exec|npx|/node_modules/|mcp|desktop-commander|playwright|^node |^sh -c|^/bin/sh|^bash$|^-?bash|claude( |$))")
+
+
+def working_children():
+    """-> short names of non-helper processes under the REPL's pane (empty = nothing running but helpers)."""
+    rc, out, _ = tmux("list-panes", "-t", SESSION, "-F", "#{pane_pid}")
+    if rc != 0 or not out.strip():
+        return []
+    try:
+        ps = subprocess.run(["ps", "-eo", "pid=,ppid=,args="], capture_output=True, text=True, timeout=8).stdout
+    except Exception as e:
+        log("working_children: ps failed %r -> treating as busy" % (e,))
+        return ["ps-failed"]
+    kids, rows = {}, []
+    for ln in ps.splitlines():
+        parts = ln.split(None, 2)
+        if len(parts) >= 2:
+            rows.append((parts[0], parts[1], parts[2] if len(parts) > 2 else ""))
+    for pid, ppid, args in rows:
+        kids.setdefault(ppid, []).append((pid, args))
+    todo, found = [out.split()[0]], []
+    while todo:
+        for pid, args in kids.get(todo.pop(), []):
+            todo.append(pid)
+            if not _HELPER.search(args):
+                found.append(args.split()[0].rsplit("/", 1)[-1][:30] if args else pid)
+    return found
+
+
+def _sleeper():
+    while True:
+        time.sleep(SLEEP_CHECK_S)
+        try:
+            sleep_check()
+        except Exception as e:
+            log("sleeper error: %r" % (e,))
+
+
 def status(tail_n=12):
     a = alive()
     lines = capture(60) if a else []
@@ -118,6 +275,7 @@ def status(tail_n=12):
 
 
 def send_text(text):
+    _mark()
     if not alive():
         return False, "session not running (use ensure)"
     if not isinstance(text, str) or not text.strip():
@@ -202,14 +360,37 @@ def _confirm_submitted(tries=3, wait=0.8, cap=None, sleep=time.sleep, key=None):
 def send_key(key):
     if key not in ALLOWED_KEYS:
         return False, "key %r not allowed" % (key,)
+    _mark()
     if not alive():
         return False, "session not running"
     rc, _, err = tmux("send-keys", "-t", SESSION, key)
     return rc == 0, "ok" if rc == 0 else err.strip()[:120]
 
 
+def wake_for(t, sleep=time.sleep, now=time.time):
+    """Anything that types into an ASLEEP head (the lane, a handoff, a ticket poke, standdown, a script on the
+    socket) wakes it first, then waits for the REPL to be ready. -> None when ready/not asleep, else the reason."""
+    if not os.path.exists(ASLEEP) or alive():
+        return None
+    log("WAKE requested by a %r on the socket" % t)
+    started, detail = ensure()
+    t0 = now()
+    while now() - t0 < WAKE_WAIT_S:
+        st = classify_pane(capture(60), alive())
+        if st in ("idle", "busy"):
+            log("WAKE ready (%s) after %d s" % (st, now() - t0))
+            return None
+        sleep(2)
+    log("WAKE FAILED: not ready after %d s (ensure: %s)" % (WAKE_WAIT_S, detail))
+    return "woke but not ready after %d s (%s)" % (WAKE_WAIT_S, detail)
+
+
 def handle(req):
     t = req.get("t")
+    if t in ("send", "key"):
+        why = wake_for(t)
+        if why:
+            return [{"t": "error", "error": why}]
     if t == "status":
         return [status()]
     if t == "ensure":
@@ -283,9 +464,13 @@ def serve():
     signal.signal(signal.SIGTERM, lambda *a: (_ for _ in ()).throw(SystemExit(0)))   # run the finally: remove the socket
     srv = Server(SOCK, Handler)
     os.chmod(SOCK, 0o600)
-    log("bridge up on %s (session=%s cmd=%s)" % (SOCK, SESSION, CMD))
-    ensure_started, detail = ensure()
-    log("ensure at boot: %s" % detail)
+    log("bridge up on %s (session=%s cmd=%s idle_sleep=%ds)" % (SOCK, SESSION, CMD, IDLE_SLEEP_S))
+    if os.path.exists(ASLEEP) and not alive():
+        log("boot: session is ASLEEP; it stays asleep until a message wakes it")
+    else:
+        ensure_started, detail = ensure()
+        log("ensure at boot: %s" % detail)
+    threading.Thread(target=_sleeper, daemon=True).start()
     try:
         srv.serve_forever()
     finally:

@@ -305,10 +305,11 @@ def tool_brief(name, inp):
     return "• " + name
 
 
-def status_text(tools, t0, now, done=False):
-    """The status bubble: last 6 steps + elapsed. Pure."""
+def status_text(tools, t0, now, done=False, waking=False):
+    """The status bubble: last 6 steps + elapsed. Pure. waking = an idle-slept head is starting."""
     secs = int(now - t0)
-    head = (f"✅ Done · {len(tools)} step(s) · {secs}s" if done else f"⏳ Working · {secs}s")
+    head = (f"✅ Done · {len(tools)} step(s) · {secs}s" if done else
+            f"⏰ Waking Head · {secs}s" if waking else f"⏳ Working · {secs}s")
     shown = tools[-6:]
     more = len(tools) - len(shown)
     body = ([f"… {more} earlier"] if more > 0 else []) + shown
@@ -993,7 +994,7 @@ class _IO:
         self._bubble(False)
 
     def _bubble(self, done):
-        text = status_text(self.tools, self.t0, time.time(), done)
+        text = status_text(self.tools, self.t0, time.time(), done, getattr(self, "waking", False))
         try:
             if self.bubble is None:
                 r = tgapi._api(self.tok, "sendMessage", **self._kw(text=text, disable_notification=True))
@@ -1445,10 +1446,13 @@ def clear_remote():
 HEAL_WAIT_S = 40
 
 
-def heal(call, io, sleep=time.sleep, now=time.time):
+def heal(call, io, sleep=time.sleep, now=time.time, asleep=False):
     """Claude exited inside tmux: ask the bridge to start it again (claude --continue keeps the conversation),
-    wait for it to come up, tell Rav either way. -> the state after the attempt. Logged (Iron Rule 12)."""
+    wait for it to come up, say so either way. -> the state after the attempt. Logged (Iron Rule 12)."""
     tgapi._log("head", event2="heal_start")
+    if asleep:                # an idle-slept head: "Waking Head" shows for the ~20 s start, then the normal indicators
+        io.waking = True
+        io.step("⏰ Waking Head")
     r = call({"t": "ensure"}) or {}
     t0 = now()
     st = "dead"
@@ -1457,7 +1461,13 @@ def heal(call, io, sleep=time.sleep, now=time.time):
         st = (call({"t": "status"}) or {}).get("state")
         if st in ("idle", "busy"):
             break
-    tgapi._log("head", event2="heal_end", state=st, ensure=str(r.get("detail"))[:100])
+    tgapi._log("head", event2="heal_end", state=st, ensure=str(r.get("detail"))[:100], asleep=asleep)
+    if asleep:      # an idle-sleep wake is routine; only a wake that FAILS is said in the thread
+        io.waking = False
+        io.step("✅ Head awake" if st in ("idle", "busy") else "⚠️ Head did not wake")
+        if st not in ("idle", "busy"):
+            io.say(f"⚠️ This head was asleep (idle) and didn't wake (state: {st}). It needs a look on the host.")
+        return st
     io.say(f"♻️ The head had stopped; I restarted it (same conversation)." if st in ("idle", "busy")
            else f"⚠️ The head had stopped and didn't come back (state: {st}). It needs a look on the host.")
     return st
@@ -1483,6 +1493,10 @@ def _turn_run(tok, m, text, call=bridge, io=None, read=read_events, sleep=time.s
         st = "unknown"
     if st == "dead" and text is not None:          # TIK-1005: a crashed head is restarted, and says so
         st = heal(call, io, sleep, now)
+    elif st == "asleep" and text is not None:      # idle-slept; wake it quietly, same conversation
+        st = heal(call, io, sleep, now, asleep=True)
+        if st not in ("idle", "busy"):
+            return                                 # the failed wake was said in heal(); nothing to type into
     if text is not None and _state["waiting_permission"] and st == "permission_prompt":
         key = perm_answer(text)[0]
         if key and not key_allowed(live_box(call), key):   # TIK-1416: the box is gone -> his words are a message, not a key
@@ -2102,7 +2116,7 @@ def command(m, tok, cmd, call=None):
         recs, _ = read_events(max(0, events_size() - 200000))
         mode = next((r["data"].get("permission_mode") for r in reversed(recs) if (r.get("data") or {}).get("permission_mode")), "?")
         tools = _state.get("tools") or []
-        live = "dead" if st == "dead" else head_state()   # busy/idle from its own events, not its screen (TIK-1017)
+        live = st if st in ("dead", "asleep") else head_state()   # busy/idle from its own events, not its screen (TIK-1017)
         say(f"State: {live} · mode: {mode} · queued: {len(_q)}" + ("\nLast steps:\n" + "\n".join(tools[-5:]) if tools else ""))
     else:
         say(f"Talk to the head here. Text, photos, files and voice notes all work.\n"
@@ -2124,6 +2138,7 @@ def _serve(tok):
                 if not _q:
                     break
                 m, text = _q.popleft()
+                _state["picking"] = True               # from here a new message goes to this turn mid-turn
             tk = tok
             try:
                 tk = _tok_for(m, tok)                      # a relayed turn speaks with the origin bot's token
@@ -2145,6 +2160,8 @@ def _serve(tok):
                     tgapi._reply(tk, m, f"⚠️ head error: {e}")
                 except Exception:
                     pass
+            finally:
+                _state["picking"] = False
 
 
 
@@ -2158,6 +2175,7 @@ BURST_GAP_S = 0.5           # a second message this soon after the first = a mul
 BURST_QUIET_S = 1.0         # ...then it waits for this much quiet
 BURST_MAX_S = 10.0          # a send that never stops still goes in after this long
 BURST_MAX_N = 40
+FWD_JOIN_S = 2.0            # a forward right after its comment joins within this, not BURST_QUIET_S
 
 
 def _burstable(m, text):
@@ -2191,7 +2209,8 @@ def _burst(tok, m, text, sleep=time.sleep, now=time.time, gone=None):
             while _q and len(got) < BURST_MAX_N:
                 qm, qt = _q[0]
                 ts = qm.get("_q_ts") or now()
-                if not (_burstable(qm, qt) and _same_sender(m, qm) and ts - last <= BURST_QUIET_S):
+                if not (_burstable(qm, qt) and _same_sender(m, qm) and
+                        ts - last <= (FWD_JOIN_S if qm.get("forward_origin") else BURST_QUIET_S)):
                     break
                 got.append(_q.popleft())
                 last = ts
@@ -2337,7 +2356,8 @@ def handle(m, tok, prep=None) -> bool:
         (prep or _start_prep)(tok, m)
         return True
     mt = {}
-    if _state.get("running") and isinstance(text, str):   # the head sees it at its next tool call (head_hook, TIK-1421)
+    # also while the worker is starting a turn (burst wait, submit): a forward sent right after its comment lands there
+    if (_state.get("running") or _state.get("picking")) and isinstance(text, str):   # seen at the next tool call (TIK-1421)
         key = _midturn_key()
         if note_midturn((ctx + "\n" if ctx else "") + text, key=key):
             mt = {"_mt": key}

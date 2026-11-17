@@ -14,6 +14,11 @@ Environment=HEAD_CWD=%h/heads/%i
 Environment=HEAD_TMUX_L=head-%i
 # resume the lane's conversation; fall back to a fresh one only if there is none to continue
 Environment="HEAD_CMD=claude --continue || claude"
+# idle sleep: after this many seconds with no message, no key, an idle screen and nothing running under the REPL, the
+# session is ended to free its memory; the next message (or any send on the socket) starts it again with --continue.
+# 0 = never. 10800 = 3 h. The stage's Settings > Heads can keep chosen heads awake (always_on.json).
+Environment=HEAD_IDLE_SLEEP_S=0
+Environment=HEAD_ALWAYS_ON=%h/.local/state/harness/always_on.json
 ExecStartPre=/bin/mkdir -p %h/.local/state/harness/%i
 # say it loudly (in the topic) when this head would start a different claude than [head] cli; never blocks
 ExecStartPre=-/usr/bin/python3 -B %h/harness/harness/cli_check.py

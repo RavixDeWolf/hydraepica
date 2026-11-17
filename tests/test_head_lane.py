@@ -960,6 +960,27 @@ class Heal(unittest.TestCase):
         self.assertTrue(any("didn't come back" in x[1] for x in io.kinds("say")))
         self.assertFalse(any(c["t"] == "send" for c in calls))
 
+    def test_asleep_head_woken_quietly_then_answers(self):
+        # an idle-slept head wakes on a message with NO restart notice (routine), same conversation
+        io, calls = self.go(["asleep", "idle"], [[ev("Stop", last_assistant_message="awake")]])
+        self.assertIn({"t": "ensure"}, calls)
+        self.assertFalse(any("restarted" in x[1] or "asleep" in x[1] for x in io.kinds("say")))
+        self.assertIn({"t": "send", "text": "hi"}, calls)
+        self.assertEqual(io.kinds("answer"), [("answer", "awake")])
+        steps = [x[1] for x in io.kinds("step")]
+        self.assertEqual(steps[:2], ["⏰ Waking Head", "✅ Head awake"])     # the indicator, then normal steps
+        self.assertFalse(io.waking)
+
+    def test_waking_header_in_status_bubble(self):
+        self.assertTrue(hl.status_text(["⏰ Waking Head"], 0, 7, waking=True).startswith("⏰ Waking Head · 7s"))
+        self.assertTrue(hl.status_text(["x"], 0, 7).startswith("⏳ Working"))
+
+    def test_asleep_head_that_does_not_wake_is_said(self):
+        io, calls = self.go(["asleep"], [])
+        self.assertTrue(any("didn't wake" in x[1] for x in io.kinds("say")))
+        self.assertFalse(any(c["t"] == "send" for c in calls))
+
+
 
 class Pure(unittest.TestCase):
     def test_tool_brief(self):
@@ -3102,6 +3123,44 @@ class MidturnOnce(GoneCheck):
         hl._q.extend([(b, "two"), (c, "three")])
         m, text = hl._burst("t", a, "one", sleep=lambda s: None, now=lambda: 1100.0, gone=lambda *x, **k: False)
         self.assertIn("2 messages", text); self.assertNotIn("two", text)
+
+    def test_a_forward_joins_its_comment_within_two_seconds(self):
+        """comment, then the forward 1.5 s later = one turn; plain text 1.5 s later is not joined."""
+        a, f = self.m(mid=1), self.m(mid=2)
+        a["_q_ts"], f["_q_ts"] = 1000.0, 1001.5
+        f["forward_origin"] = {"type": "user"}
+        hl._q.extend([(f, "fwd")])
+        m, text = hl._burst("t", a, "comment", sleep=lambda s: None, now=lambda: 1100.0, gone=lambda *x, **k: False)
+        self.assertIn("comment", text); self.assertIn("fwd", text)
+        a2, p = self.m(mid=3), self.m(mid=4)
+        a2["_q_ts"], p["_q_ts"] = 1000.0, 1001.5
+        hl._q.clear(); hl._q.extend([(p, "later")])
+        m, text = hl._burst("t", a2, "first", sleep=lambda s: None, now=lambda: 1100.0, gone=lambda *x, **k: False)
+        self.assertEqual(text, "first")
+        hl._q.clear()
+
+    def test_the_lane_counts_as_busy_while_a_turn_starts(self):
+        """a message arriving while the worker starts a turn goes to it mid-turn, not as the next turn."""
+        seen = []
+        a = self.m(mid=90); a["_q_ts"] = time.time() - 60
+        real = hl._turn
+        def turn(tok, m, text, **kw):
+            seen.append(hl._state.get("picking"))
+        hl._turn = turn
+        try:
+            delivered = []
+            once_real = (hl._wake.wait, hl.message_gone)
+            def once(timeout=None):
+                if once.n: raise KeyboardInterrupt
+                once.n += 1; return True
+            once.n = 0
+            hl._q.append((a, "x")); hl._wake.wait, hl.message_gone = once, (lambda *x, **k: False)
+            with self.assertRaises(KeyboardInterrupt):
+                hl._serve("t")
+        finally:
+            hl._turn = real; hl._wake.wait, hl.message_gone = once_real
+        self.assertEqual(seen, [True]); self.assertFalse(hl._state.get("picking"))
+
 
 class AlbumOneTurn(GoneCheck):
     """alex 2026-11-02: an album to the head is ONE turn."""

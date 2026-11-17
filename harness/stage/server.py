@@ -528,6 +528,114 @@ async def push(person: str, request: Request):
     return {"ok": True, "id": item["id"]}
 
 
+# ---- highlight-to-comment on html stage pages (stage_comments.py) -------------------------------------------
+def _html_item(person, iid):
+    with _lock:
+        st = load(person)
+        it = next((i for lst in LISTS for i in st[lst] if i["id"] == str(iid)), None)
+    if not it or it.get("kind") != "html":
+        raise HTTPException(404, "no such html stage")
+    return it
+
+
+@app.get("/api/commenter.js")
+def commenter_js():
+    """The highlight-to-comment script the app injects into html stage pages. Not secret."""
+    import stage_comments
+    return JSONResponse({"script": stage_comments.COMMENTER}, headers={"Cache-Control": "no-store"})
+
+
+@app.get("/api/comments")
+def comments_get(request: Request, id: str):
+    person, _ = person_for(request)
+    import stage_comments
+    _html_item(person, id)
+    return {"comments": stage_comments.listing(person, id)}
+
+
+@app.post("/api/comments")
+async def comments_post(request: Request):
+    """{id, op: add|del|send, ...} on one of this person's own html stages."""
+    person, _ = person_for(request)
+    try:
+        b = await request.json()
+    except Exception:
+        raise HTTPException(400, "bad body")
+    import stage_comments
+    it = _html_item(person, b.get("id"))
+    op = b.get("op")
+    if op == "add":
+        try:
+            return {"comments": stage_comments.add(person, it["id"], b)}
+        except ValueError as e:
+            raise HTTPException(400, str(e))
+    if op == "del":
+        return {"comments": stage_comments.delete(person, it["id"], str(b.get("cid")))}
+    if op == "send":
+        return await asyncio.to_thread(stage_comments.send, person, it)
+    raise HTTPException(400, "op must be add, del or send")
+
+
+# ---- Heads: the idle-sleep "Always on" list. Admins only, from the app (the chat cannot change it). Each head's bridge
+# reads it every minute; a listed lane never idle-sleeps. Every change is logged.
+ALWAYS_ON_FILE = Path(os.environ.get("HEAD_ALWAYS_ON", os.path.join(config.STATE_DIR, "always_on.json")))
+_ao_lock = threading.Lock()
+
+
+def head_lanes(run=None):
+    """-> lane names from the harness-head@<lane> units systemd knows about."""
+    import subprocess
+    run = run or subprocess.run
+    out = run(["systemctl", "--user", "list-units", "harness-head@*", "--all", "--no-legend", "--plain"],
+              capture_output=True, text=True, timeout=10).stdout
+    lanes = set()
+    for line in out.splitlines():
+        m = re.match(r"harness-head@([\w.-]+)\.service$", (line.split() or [""])[0])
+        if m:
+            lanes.add(m.group(1))
+    return sorted(lanes, key=lambda x: (x != "main", x))
+
+
+def _ao_read():
+    try:
+        return json.loads(ALWAYS_ON_FILE.read_text()).get("lanes") or []
+    except FileNotFoundError:
+        return []
+
+
+@app.get("/api/heads")
+def heads(request: Request):
+    _, uid = person_for(request)
+    if uid not in SETTINGS_ADMINS:
+        raise HTTPException(403, "not yours")
+    on = set(_ao_read())
+    return {"heads": [{"lane": ln, "always_on": ln in on, "asleep": os.path.exists(os.path.join(config.STATE_DIR, ln, "ASLEEP"))}
+                      for ln in head_lanes()]}
+
+
+@app.post("/api/heads/always_on")
+async def heads_always_on(request: Request):
+    person, uid = person_for(request)
+    if uid not in SETTINGS_ADMINS:
+        raise HTTPException(403, "not yours")
+    try:
+        body = await request.json()
+    except Exception:
+        raise HTTPException(400, "bad body")
+    lane, want = str(body.get("lane") or ""), bool(body.get("on"))
+    if lane not in head_lanes():
+        raise HTTPException(404, "no such head")
+    with _ao_lock:
+        on = set(_ao_read())
+        (on.add if want else on.discard)(lane)
+        ALWAYS_ON_FILE.parent.mkdir(parents=True, exist_ok=True)
+        tmp = ALWAYS_ON_FILE.with_suffix(".tmp")
+        tmp.write_text(json.dumps({"lanes": sorted(on), "updated": time.strftime("%F %T"), "by": person}, indent=1))
+        os.replace(tmp, ALWAYS_ON_FILE)
+    print(f"[heads] {person} set always_on {lane}={want}", flush=True)
+    return {"lane": lane, "always_on": want}
+
+
 # ---- Vault, write-only from the phone. Fresh Telegram sign-in (the app opened in the last 15 min, in the header,
 # never a URL ticket) from an admin may ADD or REPLACE a secret and list names + fingerprints. Reading and deleting
 # stay on the host (vault.py). The value is never logged or echoed; every write is said in Telegram.
@@ -691,11 +799,7 @@ async def stage_report_api(request: Request):
     person, _ = person_for(request)
     body = await request.json()
     import stage_report
-    with _lock:
-        st = load(person)
-        it = next((i for lst in LISTS for i in st[lst] if i["id"] == str(body.get("id"))), None)
-    if not it or it.get("kind") != "html":
-        raise HTTPException(404, "no such html stage")
+    it = _html_item(person, body.get("id"))
     return stage_report.report(person, it, body)
 
 

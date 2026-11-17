@@ -54,7 +54,7 @@ the terminal. The screen is read only for login and trust prompts.
 |---|---|
 | `harness/gateway.py` | The one process that polls the bot. Users allow-list, routing, buttons, reactions, edits. |
 | `harness/head_lane.py` | One lane per head: queue, voice notes (STT), photos/albums, edits, mid-turn messages, replies. |
-| `harness/head_bridge.py` | Types prompts into a Claude Code REPL in tmux; one tmux server per head. |
+| `harness/head_bridge.py` | Types prompts into a Claude Code REPL in tmux; one tmux server per head. Optional idle sleep frees an unused head's memory; the next message wakes it. |
 | `harness/hooks/head_hook.py` | Claude Code hook: every event to `events.jsonl`; permission requests wait for your tap. |
 | `harness/hooks/leakcheck.py` | Demo-safe lanes: a reply or step that would show an IP, a path, a key or a name you list is held, images OCR'd. |
 | `harness/vault.py` | Encrypted secrets: `set` / `list` (fingerprints) / `run --env`; `vault:NAME` in the config; a write-only form in the stage's Settings. |
@@ -63,7 +63,7 @@ the terminal. The screen is read only for login and trust prompts.
 | `harness/new_lane.py` | Make a new Telegram topic and it gets its own head: folder, settings, unit, first-run dialogs. |
 | `harness/jrelay.py` | `/j` to any product bot reaches that product's own head; the answer comes back in that chat. |
 | `harness/tg/` | Telegram as a tool for the heads (context, search, forward, pin, buttons, progress), and `handoff.py`. |
-| `harness/stage/` | The Mini App stage: cards, images, video, sandboxed HTML, galleries, live camera + push-to-talk, casting. |
+| `harness/stage/` | The Mini App stage: cards, images, video, sandboxed HTML, galleries, live camera + push-to-talk, casting. Highlight text on a page to comment; Send hands the notes to the head that made it. |
 | `harness/skills/` | Skills each head gets (linked in by `new_lane.py`): stage, telegram, handoff, self-edit, ship-a-gate, smaller-models. |
 | `harness/render/` | Diagrams, pages and markdown to PNG; voice notes; video contact sheets. |
 | `harness/llm.py` | Quick replies outside any head: local OpenAI-compatible endpoint first, hosted router as fallback. |
