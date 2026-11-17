@@ -7,3 +7,9 @@ state/
 __pycache__/
 .pytest_cache/
 .venv/
+# secrets: never committed (vault.py keeps these outside the repo anyway)
+*.key
+*.pem
+*.enc
+vault/
+scan_private.txt
