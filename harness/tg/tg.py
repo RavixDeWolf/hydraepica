@@ -103,21 +103,52 @@ def progress_text(pct, label, eta="", now=None):
     return f"{''.join(GRAD[i] for i in range(fill))}{EMPTY * (BAR_W - fill)} {pct}%\n{line2}"
 
 
+def _gone(e):
+    """Telegram said the message itself is unusable (400: deleted by hand, too old to edit). Anything else (a timeout,
+    DNS, a 5xx, 429) is the network, and the card is still there, still pinned."""
+    import urllib.error
+    return isinstance(e, urllib.error.HTTPError) and e.code == 400
+
+
+def _remove(mid, call=None):
+    """delete a progress card (that also drops its pin); if delete will not go, at least unpin it. -> True when done.
+    2026-11-18: most edit failures were network blips, and each one used to orphan a pinned card."""
+    for method in ("deleteMessage", "unpinChatMessage"):
+        try:
+            api(method, call, chat_id=OWNER, message_id=mid)
+            return True
+        except Exception as e:
+            tgapi._log("head_tg", event2="progress_remove_fail", method=method, message_id=mid, error=str(e)[:120])
+    return False
+
+
+def _sweep_orphans(st, call=None):
+    """retry cards whose removal failed earlier (kept in st["_orphans"]) until Telegram takes it."""
+    left = [mid for mid in st.get("_orphans", []) if not _remove(mid, call)]
+    if left:
+        st["_orphans"] = left
+    else:
+        st.pop("_orphans", None)
+
+
 def progress(args, base, thread, call=None):
     key = args[0]
     try:
         st = json.load(open(PROGRESS_FILE))
     except (OSError, ValueError):
         st = {}
+    if st.get("_orphans"):
+        _sweep_orphans(st, call); json.dump(st, open(PROGRESS_FILE, "w"))
     cur = st.get(key)
     if args[1] == "done":
+        removed = True
         if cur:
-            try:
-                api("deleteMessage", call, chat_id=OWNER, message_id=cur["id"])
-            except Exception as e:
-                tgapi._log("head_tg", event2="progress_delete_fail", error=str(e)[:120])
+            removed = _remove(cur["id"], call)
+            if not removed:                                # never forget a card we could not remove: retried later
+                st.setdefault("_orphans", []).append(cur["id"])
+                tgapi._log("head_tg", event2="progress_orphan_kept", key=key, message_id=cur["id"])
             st.pop(key, None); json.dump(st, open(PROGRESS_FILE, "w"))
-        return {"ok": True, "deleted": bool(cur)}
+        return {"ok": True, "deleted": bool(cur) and removed}
     text = progress_text(args[1], args[2] if len(args) > 2 else "", args[3] if len(args) > 3 else "")
     if cur and cur.get("text") == text:
         return {"ok": True, "message_id": cur["id"], "unchanged": True}     # Telegram refuses a no-op edit
@@ -126,8 +157,12 @@ def progress(args, base, thread, call=None):
             api("editMessageText", call, chat_id=OWNER, message_id=cur["id"], text=text)
             cur["text"] = text; json.dump(st, open(PROGRESS_FILE, "w"))
             return {"ok": True, "message_id": cur["id"]}
-        except Exception as e:                                # deleted by hand / too old: start a fresh one
+        except Exception as e:
             tgapi._log("head_tg", event2="progress_edit_fail", error=str(e)[:120])
+            if not _gone(e):                                  # network blip: the card is still pinned; the next tick edits it
+                return {"ok": False, "message_id": cur["id"], "retry": True, "error": str(e)[:120]}
+            if not _remove(cur["id"], call):                  # unusable card: take it down before posting a fresh one
+                st.setdefault("_orphans", []).append(cur["id"])
     res = api("sendMessage", call, text=text, disable_notification=True, **base)
     mid = _record(res, thread, text, "progress")
     st[key] = {"id": mid, "text": text}; json.dump(st, open(PROGRESS_FILE, "w"))

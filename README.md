@@ -97,7 +97,7 @@ keep `/api/push*` reachable from the host only.
 ## Tests
 
 ```bash
-.venv/bin/python -m pytest tests/          # 632 tests; every one runs against a throwaway config and state dir
+.venv/bin/python -m pytest tests/          # 636 tests; every one runs against a throwaway config and state dir
 node tests/test_browser_page.js            # the stage page's logic against the real index.html
 python3 safety/test_ship_check.py          # ship_check's own suite
 ```

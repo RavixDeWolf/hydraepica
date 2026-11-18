@@ -151,6 +151,51 @@ class ProgressTest(unittest.TestCase):
         tg.run(["progress", "job", "done"], call=call)
         self.assertEqual([c[0] for c in calls], ["sendMessage", "pinChatMessage", "editMessageText", "deleteMessage"])
 
+    def _api(self, fail):
+        """fake Telegram: fail = {method: list of exceptions, one per call}; records every call"""
+        calls = []
+        def call(m, kw):
+            calls.append((m, kw.get("message_id")))
+            f = fail.get(m)
+            if isinstance(f, list):
+                f = f.pop(0) if f else None
+            if f:
+                raise f
+            return {"ok": True, "result": {"message_id": 100 + len(calls)}}
+        return call, calls
+
+    def test_network_blip_on_edit_keeps_the_card(self):
+        """a timeout while editing used to post a NEW pinned card and forget the old one"""
+        import urllib.error
+        call, calls = self._api({"editMessageText": [urllib.error.URLError("handshake timed out")]})
+        first = tg.run(["progress", "j", "10", "x"], call=call)["message_id"]
+        r = tg.run(["progress", "j", "20", "x"], call=call)
+        self.assertTrue(r.get("retry")); self.assertEqual(r["message_id"], first)
+        self.assertEqual([m for m, _ in calls].count("sendMessage"), 1)          # no second card
+        tg.run(["progress", "j", "30", "x"], call=call)                          # next tick edits the same card
+        self.assertEqual(calls[-1], ("editMessageText", first))
+
+    def test_unusable_card_is_removed_before_a_fresh_one(self):
+        import urllib.error
+        e400 = urllib.error.HTTPError("u", 400, "Bad Request", {}, None)
+        call, calls = self._api({"editMessageText": [e400]})
+        first = tg.run(["progress", "j", "10", "x"], call=call)["message_id"]
+        tg.run(["progress", "j", "20", "x"], call=call)
+        self.assertIn(("deleteMessage", first), calls)
+        self.assertEqual([m for m, _ in calls].count("sendMessage"), 2)
+
+    def test_failed_done_is_retried_not_forgotten(self):
+        import urllib.error
+        net = urllib.error.URLError("dns")
+        call, calls = self._api({"deleteMessage": [net], "unpinChatMessage": [net]})
+        first = tg.run(["progress", "j", "10", "x"], call=call)["message_id"]
+        r = tg.run(["progress", "j", "done"], call=call)
+        self.assertFalse(r["deleted"])
+        self.assertEqual(json.load(open(self.f))["_orphans"], [first])
+        tg.run(["progress", "k", "10", "y"], call=call)                          # any later call sweeps it
+        self.assertEqual([c for c in calls if c[0] == "deleteMessage"][-1], ("deleteMessage", first))
+        self.assertNotIn("_orphans", json.load(open(self.f)))
+
     def test_pin_names_the_thread(self):
         """a pin without message_thread_id is chat-wide and never shows in the thread (Rav saw no pin, 2026-10-27)"""
         calls = []
@@ -290,6 +335,35 @@ class BgTest(unittest.TestCase):
     def test_kind_of(self):
         self.assertEqual([self.bg.kind_of(x) for x in ("python3 motion.py s.html o.mp4", "python3 jedit.py d export o.jpg", "pytest -q")],
                          ["video", "photo", "work"])
+
+
+
+class BgKilledTest(unittest.TestCase):
+    def test_killed_watcher_still_removes_its_bar(self):
+        """a watcher stopped by SIGTERM used to leave its pinned card behind for good"""
+        import signal, time
+        d = tempfile.mkdtemp()
+        here = os.path.dirname(os.path.abspath(__file__))
+        code = f"""
+import sys, time; sys.path.insert(0, {here!r})
+import _harness_env
+sys.path.insert(0, {HERE!r})
+import bg, tg
+tg.PROGRESS_FILE = {d!r} + "/p.json"; tg._record = lambda res, *a, **k: res["result"]["message_id"]
+bg.RUNS = {d!r} + "/runs.jsonl"; tg.default_thread = lambda: 7
+log = open({d!r} + "/calls", "a")
+def call(m, kw):
+    log.write(m + "\\n"); log.flush(); return {{"ok": True, "result": {{"message_id": 5}}}}
+def ev():
+    while True:
+        time.sleep(0.1); yield ("line", "x\\n")
+print(bg._monitor("work", "kill test", ev(), call=call, tick=60, beat=60))
+"""
+        p = subprocess.Popen([sys.executable, "-c", code], stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True)
+        time.sleep(2.0); p.send_signal(signal.SIGTERM); out, err = p.communicate(timeout=10)
+        calls = open(d + "/calls").read().split() if os.path.exists(d + "/calls") else []
+        self.assertIn("deleteMessage", calls, (calls, err))
+        self.assertIn("killed", out)
 
 
 if __name__ == "__main__":

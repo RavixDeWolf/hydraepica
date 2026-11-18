@@ -23,3 +23,4 @@ Lab features that are not in the public core yet. Each one is tagged `hydra:core
 | A comment and the forward sent right after it are one turn | hydra:core | `harness/head_lane.py` (`FWD_JOIN_S`, mid-turn while a turn starts) |
 | Highlight-to-comment on html stage pages; Send hands the notes to the publishing head | hydra:core | `harness/stage/stage_comments.py`, `/api/comments` |
 | A lane head's self-edit probe goes to that lane, not the main head | hydra:core | `head_bridge.lane_env` (HEADSAFE_SOCK / HEADSAFE_EVENTS) |
+| Progress pins are never orphaned: a network blip keeps the same card, an unusable card is removed before a fresh one, a failed removal is retried, a stopped watcher still takes its card down | hydra:core | `harness/tg/tg.py` (`progress`, `_remove`, `_orphans`), `harness/tg/bg.py` |

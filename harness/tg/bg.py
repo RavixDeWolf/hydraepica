@@ -132,15 +132,29 @@ def _monitor(kind, name, events, call=None, tick=20.0, beat=4.0, cmd=None, t_sta
     bar()
     tk = threading.Thread(target=ticker, daemon=True); tk.start()
     rc = None
-    for ev, val in events:
-        if ev == "rc":
-            rc = val; break
-        line = val
-        if line.strip():
-            state["last"] = line.strip()
-        v = parse_pct(line)
-        if v is not None:
-            state["pct"] = v
+    # 2026-11-18: a watcher that is itself stopped (SIGTERM/SIGHUP: a restart, a logout) must still take its card
+    # down. The signal becomes SystemExit, the loop exits, and the bar is removed below with an honest result line.
+    import signal
+    def _killed(signum, _frame):
+        raise SystemExit(128 + signum)
+    for sig in (signal.SIGTERM, signal.SIGHUP, signal.SIGINT):
+        try:
+            signal.signal(sig, _killed)
+        except ValueError:                                 # not the main thread (tests): nothing to install
+            pass
+    try:
+        for ev, val in events:
+            if ev == "rc":
+                rc = val; break
+            line = val
+            if line.strip():
+                state["last"] = line.strip()
+            v = parse_pct(line)
+            if v is not None:
+                state["pct"] = v
+    except SystemExit as e:
+        rc = "killed"
+        print(f"bg.py: stopped by signal (exit {e.code}); removing the bar", file=sys.stderr)
     stop.set(); hb.join(1); tk.join(1)
     secs = time.time() - t0
     try:
@@ -149,6 +163,7 @@ def _monitor(kind, name, events, call=None, tick=20.0, beat=4.0, cmd=None, t_sta
         print(f"bg.py: could not remove the bar ({e})", file=sys.stderr)
     msg = (f"✅ {name} done in {fmt(secs)}" if rc == 0 else
            f"⏹ {name}: stopped after {fmt(secs)} (the job ended without an exit code)" if rc == "stopped" else
+           f"⏹ {name}: my progress watcher was stopped after {fmt(secs)}; the job itself may still be running" if rc == "killed" else
            f"⚠️ {name}: lost track after {fmt(secs)} (still running?)" if rc is None else
            f"❌ {name} FAILED (exit {rc}) after {fmt(secs)}: {state['last'][:160]}")
     try:
