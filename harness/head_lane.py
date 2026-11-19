@@ -2900,6 +2900,12 @@ if _LANE == "main":
         """new_lane.py in a worker; then load the lane and say so in the new topic, ready or failed (Iron Rule 12)."""
         import subprocess
         try:
+            return _build_lane(tok, uid, tid, title, run, post, subprocess)
+        finally:
+            _BUILDING.discard(tid)                            # ready or failed: the topic stops answering "setting up"
+
+    def _build_lane(tok, uid, tid, title, run, post, subprocess):
+        try:
             r = (run or subprocess.run)([sys.executable, NEW_LANE, "create", "--title", title, "--thread", str(tid),
                                          "--uid", str(uid), "--json"], capture_output=True, text=True, timeout=420)
             res = json.loads((r.stdout or "").strip().splitlines()[-1])
@@ -2922,6 +2928,11 @@ if _LANE == "main":
             tgapi._log("head", event2="topic_lane_post_fail", thread=tid, error=str(e)[:200])
         return res
 
+    # A message sent in a new topic while its head is still being built (about a minute) used to fall through to
+    # the gateway's plain chat model, which answered "can't answer right now (no model reachable)" on installs with
+    # no [[llm.endpoints]] (beta test 2026-11-18). It is told to wait instead, like a rename.
+    _BUILDING = set()
+
     def topic_created(m, tok, start=None):
         """A new topic: Rav's, in his own DM -> build its head in the background and return True.
         Anyone else, any other chat, a topic a head already answers: False / untouched (the gateway goes on)."""
@@ -2937,6 +2948,7 @@ if _LANE == "main":
         if tid in HEAD_THREADS.values() or any(tid in o.HEAD_THREADS.values() for o in OTHERS):
             return True
         tgapi._log("head", event2="topic_new", thread=tid, title=str(t.get("name"))[:60])
+        _BUILDING.add(tid)                                    # until build_lane ends, its messages get "setting up"
         (start or (lambda f, *a: threading.Thread(target=f, args=a, daemon=True, name="new-lane").start()))(
             build_lane, tok, uid, tid, str(t.get("name") or "topic"))
         return True
@@ -3131,6 +3143,10 @@ if _LANE == "main":
         if topic_created(m, tok):
             return True
         if topic_edited(m, tok):
+            return True
+        if m.get("message_thread_id") in _BUILDING:          # never dropped silently: told to resend
+            tgapi._reply(tok, m, "I'm still setting up this topic's head (about a minute). I didn't take that message; "
+                                 "send it again once I say it's ready.")
             return True
         if m.get("message_thread_id") in _RENAMING:          # never dropped silently: he's told to resend
             tgapi._reply(tok, m, "This head is restarting for a rename. I didn't take that message; send it again in a minute.")

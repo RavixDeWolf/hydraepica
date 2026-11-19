@@ -2784,6 +2784,24 @@ class TopicCreatedTest(unittest.TestCase):
         finally:
             hl.OTHERS[:] = before
 
+    def test_message_while_building_is_told_to_wait(self):
+        hl._BUILDING.clear(); SENT.clear()
+        self.assertTrue(hl.topic_created(self._m(), "tok", start=self.start))
+        m = {"message_id": 6, "from": {"id": OWNER}, "chat": {"id": OWNER, "type": "private"},
+             "message_thread_id": 777001, "text": "hello"}
+        try:
+            self.assertTrue(hl.handle(m, "tok"))
+        finally:
+            hl._BUILDING.clear()
+        self.assertTrue(any("still setting up" in s for s in SENT))
+
+    def test_building_ends_on_success_and_failure(self):
+        class R: stdout = '{"ok": false, "step": "bridge", "why": "x"}\n'
+        for run in (lambda a, **k: R(), lambda a, **k: (_ for _ in ()).throw(OSError("boom"))):
+            hl._BUILDING.add(777001)
+            hl.build_lane("tok", OWNER, 777001, "Garden", run=run, post=lambda tok, meth, **kw: None)
+            self.assertNotIn(777001, hl._BUILDING)
+
     def test_handle_routes_topic_first(self):
         real = hl.topic_created; seen = []
         hl.topic_created = lambda m, tok: seen.append(m) or True
